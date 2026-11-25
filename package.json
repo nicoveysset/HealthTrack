@@ -1,7 +1,0 @@
-{
-  "dependencies": {
-    "approve": "^0.0.12",
-    "esbuild": "^0.28.2",
-    "healthtrack-frontend": "file:frontend"
-  }
-}
