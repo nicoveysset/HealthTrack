@@ -87,7 +87,12 @@ function HomePage() {
                 <h3>Prendre un RDV</h3>
                 <p>Trouvez un créneau disponible</p>
               </Link>
-              
+
+              <Link to="/mes-rendezvous" className="action-card">
+                <h3>Mes rendez-vous</h3>
+                <p>Consultez ou annulez vos RDV</p>
+              </Link>
+
               <Link to="/dossier-medical" className="action-card">
                 <h3>Dossier médical</h3>
                 <p>Consultez votre historique</p>

@@ -85,3 +85,7 @@ docs/api/
 .IGNORE_THIS_etape.MD
 PLAN.md
 MISTRAL.md
+
+.env.jwt_secret
+
+.env.frontend

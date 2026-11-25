@@ -4,8 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
-REGION="${AWS_REGION:-eu-west-1}"
-BUCKET_NAME="healthtrack-frontend-$(date +%s)-$RANDOM"
+REGION="${AWS_REGION:-us-east-1}"
+# CloudFront est interdit sur AWS Academy Learner Lab : desactive par defaut.
+# Sur un compte AWS classique : USE_CLOUDFRONT=true ./deploy-frontend.sh
+USE_CLOUDFRONT="${USE_CLOUDFRONT:-false}"
 
 for command in aws jq npm; do
   if ! command -v "$command" >/dev/null 2>&1; then
@@ -33,18 +35,41 @@ cd "$FRONTEND_DIR"
 npm ci
 npm run build
 
-echo "Creating S3 bucket $BUCKET_NAME..."
-if [[ "$REGION" == "us-east-1" ]]; then
-  aws s3api create-bucket \
-    --bucket "$BUCKET_NAME" \
-    --region "$REGION" \
-    --object-ownership BucketOwnerEnforced
+# Le frontend lit ses URLs dans window.healthtrackConfig (public/config.js),
+# pas dans les variables VITE_* : on ecrit les vraies URLs API Gateway
+# dans le config.js publie.
+cat > "$FRONTEND_DIR/dist/config.js" <<EOF
+window.healthtrackConfig = {
+  API_UTILISATEURS_URL: "$UTILISATEURS_API_URL",
+  API_RDV_URL: "$RDV_API_URL",
+  API_DOSSIERS_URL: "$DOSSIERS_API_URL",
+  API_ORDONNANCES_URL: "$ORDONNANCES_API_URL"
+};
+EOF
+echo "config.js written with API Gateway URLs"
+
+# Reutilise le bucket d'un deploiement precedent : l'URL du site ne change pas
+if [[ -z "${FRONTEND_BUCKET:-}" && -f "$PROJECT_ROOT/.env.frontend" ]]; then
+  FRONTEND_BUCKET="$(grep '^FRONTEND_BUCKET=' "$PROJECT_ROOT/.env.frontend" | cut -d= -f2)"
+fi
+BUCKET_NAME="${FRONTEND_BUCKET:-healthtrack-frontend-$(date +%s)-$RANDOM}"
+
+if aws s3api head-bucket --bucket "$BUCKET_NAME" >/dev/null 2>&1; then
+  echo "Reusing S3 bucket $BUCKET_NAME..."
 else
-  aws s3api create-bucket \
-    --bucket "$BUCKET_NAME" \
-    --region "$REGION" \
-    --create-bucket-configuration "LocationConstraint=$REGION" \
-    --object-ownership BucketOwnerEnforced
+  echo "Creating S3 bucket $BUCKET_NAME..."
+  if [[ "$REGION" == "us-east-1" ]]; then
+    aws s3api create-bucket \
+      --bucket "$BUCKET_NAME" \
+      --region "$REGION" \
+      --object-ownership BucketOwnerEnforced
+  else
+    aws s3api create-bucket \
+      --bucket "$BUCKET_NAME" \
+      --region "$REGION" \
+      --create-bucket-configuration "LocationConstraint=$REGION" \
+      --object-ownership BucketOwnerEnforced
+  fi
 fi
 
 aws s3api put-public-access-block \
@@ -71,6 +96,26 @@ BUCKET_POLICY="$(jq -n --arg bucket "$BUCKET_NAME" '{
 aws s3api put-bucket-policy --bucket "$BUCKET_NAME" --policy "$BUCKET_POLICY" --region "$REGION"
 
 aws s3 sync "$FRONTEND_DIR/dist" "s3://$BUCKET_NAME" --delete --region "$REGION"
+
+# index.html et config.js ne doivent jamais rester en cache dans le navigateur,
+# sinon il continue a charger l'ancienne version du site apres un redeploiement
+# (les fichiers JS/CSS ont un nom qui change a chaque build, eux).
+for file in index.html config.js; do
+  aws s3 cp "$FRONTEND_DIR/dist/$file" "s3://$BUCKET_NAME/$file" \
+    --cache-control "no-cache, no-store, must-revalidate" \
+    --region "$REGION" --only-show-errors
+done
+
+WEBSITE_URL="http://$BUCKET_NAME.s3-website-$REGION.amazonaws.com"
+if ! grep -qxF '.env.frontend' "$PROJECT_ROOT/.gitignore"; then
+  printf '\n.env.frontend\n' >> "$PROJECT_ROOT/.gitignore"
+fi
+
+if [[ "$USE_CLOUDFRONT" != "true" ]]; then
+  printf 'FRONTEND_BUCKET=%s\nFRONTEND_URL=%s\n' "$BUCKET_NAME" "$WEBSITE_URL" > "$PROJECT_ROOT/.env.frontend"
+  echo "Frontend deployed (site statique S3, sans CloudFront): $WEBSITE_URL"
+  exit 0
+fi
 
 ORIGIN_DOMAIN="$BUCKET_NAME.s3-website-$REGION.amazonaws.com"
 DISTRIBUTION_CONFIG="$(jq -n \
@@ -138,9 +183,6 @@ FRONTEND_BUCKET=$BUCKET_NAME
 FRONTEND_CLOUDFRONT_ID=$DISTRIBUTION_ID
 FRONTEND_URL=https://$DOMAIN_NAME
 EOF
-if ! grep -qxF '.env.frontend' "$PROJECT_ROOT/.gitignore"; then
-  printf '\n.env.frontend\n' >> "$PROJECT_ROOT/.gitignore"
-fi
 
 echo "Frontend deployed: https://$DOMAIN_NAME"
 echo "Bucket: $BUCKET_NAME"

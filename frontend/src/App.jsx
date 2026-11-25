@@ -20,6 +20,7 @@ import OrdonnancePage from './pages/praticien/OrdonnancePage';
 
 // Pages Patient
 import PatientPriseRdvPage from './pages/patient/PriseRdvPage';
+import MesRendezVousPage from './pages/patient/MesRendezVousPage';
 import DossierMedicalPage from './pages/patient/DossierMedicalPage';
 
 // Pages communes
@@ -100,6 +101,14 @@ function App() {
               </ProtectedRoute>
             } />
             
+            <Route path="/mes-rendezvous" element={
+              <ProtectedRoute>
+                <PatientRoute>
+                  <MesRendezVousPage />
+                </PatientRoute>
+              </ProtectedRoute>
+            } />
+
             <Route path="/dossier-medical" element={
               <ProtectedRoute>
                 <DossierMedicalPage />

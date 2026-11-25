@@ -9,7 +9,7 @@
 
 set -e
 
-REGION="${AWS_REGION:-eu-west-1}"
+REGION="${AWS_REGION:-us-east-1}"
 
 echo "🧹 [Cleanup] Suppression des ressources AWS..."
 echo ""

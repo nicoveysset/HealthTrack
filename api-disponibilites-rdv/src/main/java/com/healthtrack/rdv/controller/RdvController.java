@@ -65,9 +65,11 @@ public class RdvController {
     }
     @GetMapping("/rendezvous")
     public PagedResponse<RendezVous> listRdv(@RequestParam(required = false) String statut,
+                                             @RequestParam(required = false) String dateDebut,
+                                             @RequestParam(required = false) String dateFin,
                                              @RequestParam(defaultValue = "1") int page,
                                              @RequestParam(defaultValue = "10") int limit) {
-        return service.listRendezVous(uid(), utype(), statut, page, limit);
+        return service.listRendezVous(uid(), utype(), statut, dateDebut, dateFin, page, limit);
     }
     @PostMapping("/rendezvous/{id}/confirmer") public RendezVous confirmer(@PathVariable String id) { return service.updateStatut(id, "CONFIRME", uid(), utype()); }
     @PostMapping("/rendezvous/{id}/annuler") public RendezVous annuler(@PathVariable String id) { return service.updateStatut(id, "ANNULE", uid(), utype()); }

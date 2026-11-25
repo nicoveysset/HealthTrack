@@ -9,7 +9,7 @@
 
 set -e
 
-REGION="${AWS_REGION:-eu-west-1}"
+REGION="${AWS_REGION:-us-east-1}"
 
 create_table() {
   local table_name="$2"
@@ -224,7 +224,6 @@ create_table \
     AttributeName=indispoId,AttributeType=S \
     AttributeName=praticienId,AttributeType=S \
     AttributeName=dateDebut,AttributeType=S \
-    AttributeName=dateFin,AttributeType=S \
   --key-schema \
     AttributeName=indispoId,KeyType=HASH \
   --global-secondary-indexes \

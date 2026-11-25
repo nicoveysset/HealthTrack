@@ -192,9 +192,34 @@ public class RdvService {
         return false;
     }
 
-    public PagedResponse<RendezVous> listRendezVous(String userId, String type, String statut, int page, int limit) {
+    /**
+     * Liste paginee des RDV de l'utilisateur connecte.
+     * Filtres optionnels :
+     *  - statut    : un ou plusieurs statuts separes par des virgules (ex. "PLANIFIE,CONFIRME")
+     *  - dateDebut / dateFin : periode au format YYYY-MM-DD (bornes incluses)
+     * Tri : par date puis heure croissantes.
+     */
+    public PagedResponse<RendezVous> listRendezVous(String userId, String type, String statut,
+                                                    String dateDebut, String dateFin, int page, int limit) {
+        if (page < 1 || limit < 1 || limit > 100)
+            throw new ApiException("ValidationError", "page doit etre >= 1 et limit entre 1 et 100", 400);
+        if (dateDebut != null && !dateDebut.matches("\\d{4}-\\d{2}-\\d{2}"))
+            throw new ApiException("ValidationError", "dateDebut au format YYYY-MM-DD requis", 400);
+        if (dateFin != null && !dateFin.matches("\\d{4}-\\d{2}-\\d{2}"))
+            throw new ApiException("ValidationError", "dateFin au format YYYY-MM-DD requis", 400);
+
         List<RendezVous> rdvs = "PATIENT".equals(type) ? rdvRepo.findByPatient(userId) : rdvRepo.findByPraticien(userId);
-        if (statut != null) rdvs = rdvs.stream().filter(r -> r.getStatut().equals(statut)).toList();
+        if (statut != null && !statut.isBlank()) {
+            Set<String> statuts = new HashSet<>();
+            for (String s : statut.split(",")) if (!s.isBlank()) statuts.add(s.trim().toUpperCase());
+            rdvs = rdvs.stream().filter(r -> statuts.contains(r.getStatut())).toList();
+        }
+        // Les dates sont au format ISO (YYYY-MM-DD) : la comparaison de chaines suit l'ordre chronologique
+        if (dateDebut != null) rdvs = rdvs.stream().filter(r -> r.getDate().compareTo(dateDebut) >= 0).toList();
+        if (dateFin != null) rdvs = rdvs.stream().filter(r -> r.getDate().compareTo(dateFin) <= 0).toList();
+        rdvs = rdvs.stream()
+            .sorted(Comparator.comparing(RendezVous::getDate).thenComparing(RendezVous::getHeure))
+            .toList();
         int from = Math.min((page-1)*limit, rdvs.size());
         int to = Math.min(from+limit, rdvs.size());
         return new PagedResponse<>(rdvs.subList(from, to), rdvs.size(), page, limit);

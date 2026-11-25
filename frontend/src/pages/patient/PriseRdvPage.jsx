@@ -56,7 +56,9 @@ function PriseRdvPage() {
         { headers, params: { dateDebut, dateFin } }
       );
       const allCreneaux = res.data || [];
-      setCreneaux(allCreneaux.filter(c => c.disponible));
+      // L'API ne renvoie que les creneaux libres ({date, heure, duree}) :
+      // on n'exclut que ceux explicitement marques indisponibles.
+      setCreneaux(allCreneaux.filter(c => c.disponible !== false));
     } catch (err) {
       setError(err.response?.data?.message || 'Erreur lors du chargement des créneaux');
     } finally {
