@@ -1,0 +1,770 @@
+openapi: 3.0.3
+info:
+  title: HealthTrack API - Dossiers Médicaux
+  description: |
+    API de gestion des dossiers médicaux pour l'application HealthTrack.
+    
+    Cette API permet la gestion des dossiers médicaux des patients, 
+    incluant les antécédents, allergies, vaccinations et autres informations médicales.
+  version: 1.0.0
+  contact:
+    name: HealthTrack Team
+    email: contact@healthtrack.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.healthtrack.com/dossiers-medicaux
+    description: Production server
+  - url: https://staging-api.healthtrack.com/dossiers-medicaux
+    description: Staging server
+  - url: http://localhost:3000/dossiers-medicaux
+    description: Development server
+
+tags:
+  - name: Dossiers
+    description: Gestion des dossiers médicaux
+  - name: Antecedents
+    description: Gestion des antécédents médicaux
+  - name: Allergies
+    description: Gestion des allergies
+  - name: Vaccinations
+    description: Gestion des vaccinations
+
+security:
+  - bearerAuth: []
+
+paths:
+  /patients/{patientId}/dossier:
+    get:
+      tags:
+        - Dossiers
+      summary: Obtenir le dossier médical d'un patient
+      description: |
+        Retourne le dossier médical complet d'un patient, incluant :
+        - Informations du dossier (groupe sanguin, etc.)
+        - Liste des antécédents
+        - Liste des allergies
+        - Liste des vaccinations
+      operationId: getDossierMedical
+      parameters:
+        - $ref: '#/components/parameters/patientId'
+      responses:
+        '200':
+          description: Dossier médical complet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DossierMedicalComplet'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /dossiers/{dossierId}/antecedents:
+    post:
+      tags:
+        - Antecedents
+      summary: Créer un nouvel antécédent
+      description: Ajoute un nouvel antécédent médical au dossier d'un patient
+      operationId: createAntecedent
+      parameters:
+        - name: dossierId
+          in: path
+          required: true
+          description: ID du dossier médical
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AntecedentInput'
+      responses:
+        '201':
+          description: Antécédent créé avec succès
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Antecedent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /antecedents/{antecedentId}:
+    patch:
+      tags:
+        - Antecedents
+      summary: Mettre à jour un antécédent
+      description: Met à jour les informations d'un antécédent médical existant
+      operationId: updateAntecedent
+      parameters:
+        - $ref: '#/components/parameters/antecedentId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AntecedentUpdate'
+      responses:
+        '200':
+          description: Antécédent mis à jour
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Antecedent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      tags:
+        - Antecedents
+      summary: Archiver un antécédent
+      description: Archive un antécédent médical (uniquement pour les antécédents PONCTUELS)
+      operationId: archiveAntecedent
+      parameters:
+        - $ref: '#/components/parameters/antecedentId'
+      responses:
+        '200':
+          description: Antécédent archivé
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Antecedent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Conflit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          examples:
+            alreadyArchived:
+              value:
+                error: "Conflict"
+                message: "Antécédent déjà archivé"
+                statusCode: 409
+            chronic:
+              value:
+                error: "ChronicConditionCannotBeArchivedException"
+                message: "Les antécédents chroniques ne peuvent pas être archivés"
+                statusCode: 409
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /patients/{patientId}/antecedents:
+    get:
+      tags:
+        - Antecedents
+      summary: Lister les antécédents d'un patient
+      description: Retourne la liste des antécédents médicaux d'un patient
+      operationId: listAntecedentsByPatient
+      parameters:
+        - $ref: '#/components/parameters/patientId'
+        - name: type
+          in: query
+          description: Filtrer par type d'antécédent
+          required: false
+          schema:
+            type: string
+            enum: [CHRONIQUE, PONCTUEL]
+        - name: statut
+          in: query
+          description: Filtrer par statut
+          required: false
+          schema:
+            type: string
+            enum: [ACTIF, ARCHIVE]
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: Liste des antécédents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Antecedent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /dossiers/{dossierId}/allergies:
+    post:
+      tags:
+        - Allergies
+      summary: Créer une nouvelle allergie
+      description: Ajoute une nouvelle allergie au dossier d'un patient
+      operationId: createAllergie
+      parameters:
+        - name: dossierId
+          in: path
+          required: true
+          description: ID du dossier médical
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AllergieInput'
+      responses:
+        '201':
+          description: Allergie créée avec succès
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Allergie'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /allergies/{allergieId}:
+    delete:
+      tags:
+        - Allergies
+      summary: Supprimer une allergie
+      description: Supprime une allergie du dossier d'un patient
+      operationId: deleteAllergie
+      parameters:
+        - $ref: '#/components/parameters/allergieId'
+      responses:
+        '204':
+          description: Allergie supprimée avec succès
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Conflit - Allergie liée à une ordonnance active
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          example:
+            error: "AllergyLinkedToActivePrescriptionException"
+            message: "Cette allergie est liée à une ordonnance active"
+            statusCode: 409
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /patients/{patientId}/allergies:
+    get:
+      tags:
+        - Allergies
+      summary: Lister les allergies d'un patient
+      description: Retourne la liste des allergies d'un patient
+      operationId: listAllergiesByPatient
+      parameters:
+        - $ref: '#/components/parameters/patientId'
+        - name: medicamentConcerne
+          in: query
+          description: Filtrer par médicament concerné
+          required: false
+          schema:
+            type: string
+        - name: severite
+          in: query
+          description: Filtrer par sévérité
+          required: false
+          schema:
+            type: string
+            enum: [LEGERE, MODEREE, SEVERE]
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: Liste des allergies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Allergie'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /dossiers/{dossierId}/vaccinations:
+    post:
+      tags:
+        - Vaccinations
+      summary: Créer une nouvelle vaccination
+      description: Ajoute une nouvelle vaccination au dossier d'un patient
+      operationId: createVaccination
+      parameters:
+        - name: dossierId
+          in: path
+          required: true
+          description: ID du dossier médical
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VaccinationInput'
+      responses:
+        '201':
+          description: Vaccination créée avec succès
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vaccination'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /patients/{patientId}/vaccinations:
+    get:
+      tags:
+        - Vaccinations
+      summary: Lister les vaccinations d'un patient
+      description: Retourne la liste des vaccinations d'un patient
+      operationId: listVaccinationsByPatient
+      parameters:
+        - $ref: '#/components/parameters/patientId'
+        - name: nomVaccin
+          in: query
+          description: Filtrer par nom de vaccin
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: Liste des vaccinations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Vaccination'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token JWT pour l'authentification
+
+  schemas:
+    DossierMedical:
+      type: object
+      properties:
+        patientId:
+          type: string
+          format: uuid
+          example: "patient-uuid-1234"
+          description: ID du patient propriétaire du dossier
+        groupeSanguin:
+          type: string
+          enum: [A+, A-, B+, B-, AB+, AB-, O+, O-]
+          example: "A+"
+          description: Groupe sanguin du patient
+        dateCreation:
+          type: string
+          format: date-time
+          example: "2023-11-25T10:00:00Z"
+          description: Date de création du dossier
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2023-11-25T10:00:00Z"
+          description: Date de dernière mise à jour
+
+    Antecedent:
+      type: object
+      properties:
+        antecedentId:
+          type: string
+          format: uuid
+          example: "antecedent-uuid-1234"
+        dossierId:
+          type: string
+          format: uuid
+          example: "patient-uuid-1234"
+        libellé:
+          type: string
+          maxLength: 200
+          example: "Diabète de type 2"
+          description: Libellé de l'antécédent
+        type:
+          type: string
+          enum: [CHRONIQUE, PONCTUEL]
+          example: "CHRONIQUE"
+          description: Type d'antécédent
+        date:
+          type: string
+          format: date-time
+          example: "2020-01-15T00:00:00Z"
+          description: Date de l'antécédent
+        statut:
+          type: string
+          enum: [ACTIF, ARCHIVE]
+          example: "ACTIF"
+        description:
+          type: string
+          maxLength: 1000
+          example: "Diagnostiqué en 2020, traitement en cours"
+          description: Description détaillée
+        createdAt:
+          type: string
+          format: date-time
+          example: "2023-11-25T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2023-11-25T10:00:00Z"
+
+    Allergie:
+      type: object
+      properties:
+        allergieId:
+          type: string
+          format: uuid
+          example: "allergie-uuid-1234"
+        patientId:
+          type: string
+          format: uuid
+          example: "patient-uuid-1234"
+        médicamentConcerne:
+          type: string
+          maxLength: 200
+          example: "Pénicilline"
+          description: Médicament concerné par l'allergie
+        sévérité:
+          type: string
+          enum: [LEGERE, MODEREE, SEVERE]
+          example: "SEVERE"
+          description: Niveau de sévérité de l'allergie
+        dateDécouverte:
+          type: string
+          format: date-time
+          example: "2015-05-20T00:00:00Z"
+          description: Date de découverte de l'allergie
+        description:
+          type: string
+          maxLength: 1000
+          example: "Réaction allergique sévère avec œdème"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2023-11-25T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2023-11-25T10:00:00Z"
+
+    Vaccination:
+      type: object
+      properties:
+        vaccinationId:
+          type: string
+          format: uuid
+          example: "vaccination-uuid-1234"
+        dossierId:
+          type: string
+          format: uuid
+          example: "patient-uuid-1234"
+        nomVaccin:
+          type: string
+          maxLength: 200
+          example: "COVID-19 (Pfizer-BioNTech)"
+          description: Nom du vaccin
+        date:
+          type: string
+          format: date-time
+          example: "2023-06-15T00:00:00Z"
+          description: Date de la vaccination
+        rappelPrévu:
+          type: string
+          format: date-time
+          example: "2024-06-15T00:00:00Z"
+          description: Date du prochain rappel
+        description:
+          type: string
+          maxLength: 1000
+          example: "Première dose"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2023-11-25T10:00:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2023-11-25T10:00:00Z"
+
+    DossierMedicalComplet:
+      type: object
+      properties:
+        dossier:
+          $ref: '#/components/schemas/DossierMedical'
+        antecedents:
+          type: array
+          items:
+            $ref: '#/components/schemas/Antecedent'
+        allergies:
+          type: array
+          items:
+            $ref: '#/components/schemas/Allergie'
+        vaccinations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Vaccination'
+
+    AntecedentInput:
+      type: object
+      required:
+        - libellé
+      properties:
+        libellé:
+          type: string
+          minLength: 2
+          maxLength: 200
+          example: "Diabète de type 2"
+        type:
+          type: string
+          enum: [CHRONIQUE, PONCTUEL]
+          default: PONCTUEL
+          example: "CHRONIQUE"
+        date:
+          type: string
+          format: date-time
+          example: "2020-01-15T00:00:00Z"
+        description:
+          type: string
+          maxLength: 1000
+          example: "Diagnostiqué en 2020"
+
+    AntecedentUpdate:
+      type: object
+      properties:
+        libellé:
+          type: string
+          minLength: 2
+          maxLength: 200
+          example: "Diabète de type 2 (mis à jour)"
+        description:
+          type: string
+          maxLength: 1000
+          example: "Diagnostiqué en 2020, traitement en cours"
+        date:
+          type: string
+          format: date-time
+          example: "2020-01-15T00:00:00Z"
+
+    AllergieInput:
+      type: object
+      required:
+        - médicamentConcerne
+      properties:
+        médicamentConcerne:
+          type: string
+          maxLength: 200
+          example: "Pénicilline"
+        sévérité:
+          type: string
+          enum: [LEGERE, MODEREE, SEVERE]
+          default: MODEREE
+          example: "SEVERE"
+        dateDécouverte:
+          type: string
+          format: date-time
+          example: "2015-05-20T00:00:00Z"
+        description:
+          type: string
+          maxLength: 1000
+          example: "Réaction allergique sévère"
+
+    VaccinationInput:
+      type: object
+      required:
+        - nomVaccin
+      properties:
+        nomVaccin:
+          type: string
+          maxLength: 200
+          example: "COVID-19 (Pfizer-BioNTech)"
+        date:
+          type: string
+          format: date-time
+          example: "2023-06-15T00:00:00Z"
+        rappelPrévu:
+          type: string
+          format: date-time
+          example: "2024-06-15T00:00:00Z"
+        description:
+          type: string
+          maxLength: 1000
+          example: "Première dose"
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+        - statusCode
+      properties:
+        error:
+          type: string
+          example: "NotFound"
+        message:
+          type: string
+          example: "Ressource non trouvée"
+        statusCode:
+          type: integer
+          example: 404
+
+  responses:
+    BadRequest:
+      description: Requête invalide
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Unauthorized:
+      description: Non autorisé
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    Forbidden:
+      description: Accès interdit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    NotFound:
+      description: Ressource non trouvée
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+    InternalServerError:
+      description: Erreur interne du serveur
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  parameters:
+    patientId:
+      name: patientId
+      in: path
+      required: true
+      description: ID du patient
+      schema:
+        type: string
+        format: uuid
+
+    antecedentId:
+      name: antecedentId
+      in: path
+      required: true
+      description: ID de l'antécédent
+      schema:
+        type: string
+        format: uuid
+
+    allergieId:
+      name: allergieId
+      in: path
+      required: true
+      description: ID de l'allergie
+      schema:
+        type: string
+        format: uuid
+
+    page:
+      name: page
+      in: query
+      description: Numéro de la page
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+
+    limit:
+      name: limit
+      in: query
+      description: Nombre d'éléments par page
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10

@@ -1,0 +1,83 @@
+# =============================================================================
+# HealthTrack - .gitignore
+# =============================================================================
+
+# Fichiers générés par le système
+.DS_Store
+Thumbs.db
+
+# Node.js
+node_modules/
+
+# Fichiers de build
+*.js.map
+*.js.log
+
+# Fichiers de configuration locaux
+.env
+.env.local
+.env.*.local
+.env.cognito
+.env.lambdas
+.env.apigateway
+.env.frontend
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Fichiers IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Build frontend
+dist/
+build/
+
+# Fichiers temporaires
+*.tmp
+*.temp
+
+# Fichiers de déploiement
+.infrastructure/.env*  # Déjà géré par les scripts, mais on double
+
+# Fichiers de cache
+.cache/
+.eslintcache
+
+# AWS CLI
+.aws/
+
+# Serverless
+.serverless/
+
+# Fichiers de test de coverage
+coverage/
+.nyc_output/
+
+# Fichiers de dépendances Python (si utilisés)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Fichiers de dépendances Java (si utilisés)
+target/
+*.class
+*.jar
+
+# Fichiers Docker (si utilisés plus tard)
+.docker/
+
+# Fichiers de documentation générés
+docs/api/
+
+# Notes propres au projet
+.IGNORE_THIS_etape.MD
+PLAN.md
+MISTRAL.md
