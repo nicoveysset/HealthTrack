@@ -5,16 +5,16 @@ import com.healthtrack.utilisateurs.dto.*;
 import com.healthtrack.utilisateurs.exception.ApiException;
 import com.healthtrack.utilisateurs.model.*;
 import com.healthtrack.utilisateurs.repository.UserRepository;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
-@Transactional
 public class UserService {
 
     private final UserRepository userRepository;
@@ -28,20 +28,17 @@ public class UserService {
     }
 
     public AuthResponse register(RegisterRequest req) {
-        UserType type;
-        try {
-            type = req.getUserType();
-        } catch (IllegalArgumentException e) {
+        String type = req.type().toUpperCase();
+        if (!type.equals("PRATICIEN") && !type.equals("PATIENT"))
             throw new ApiException("ValidationError", "type doit être PRATICIEN ou PATIENT", 400);
-        }
 
-        if (type == UserType.PRATICIEN) {
+        if (type.equals("PRATICIEN")) {
             if (req.specialite() == null || req.specialite().isBlank())
                 throw new ApiException("ValidationError", "specialite est requis pour un praticien", 400);
             if (req.rpps() == null || req.rpps().isBlank())
                 throw new ApiException("ValidationError", "rpps est requis pour un praticien", 400);
         }
-        if (type == UserType.PATIENT) {
+        if (type.equals("PATIENT")) {
             if (req.dateNaissance() == null || req.dateNaissance().isBlank())
                 throw new ApiException("ValidationError", "dateNaissance est requis pour un patient", 400);
             if (req.nss() == null || req.nss().isBlank())
@@ -51,6 +48,7 @@ public class UserService {
         if (userRepository.existsByEmail(req.email()))
             throw new ApiException("EmailAlreadyUsedException", "Un utilisateur avec cet email existe déjà", 409);
 
+        String now = Instant.now().toString();
         User user = new User();
         user.setUserId(UUID.randomUUID().toString());
         user.setEmail(req.email());
@@ -59,18 +57,20 @@ public class UserService {
         user.setFirstName(req.firstName());
         user.setLastName(req.lastName());
         user.setName(req.firstName() + " " + req.lastName());
+        user.setCreatedAt(now);
+        user.setUpdatedAt(now);
 
-        if (type == UserType.PRATICIEN) {
+        if (type.equals("PRATICIEN")) {
             user.setSpecialite(req.specialite());
             user.setRpps(req.rpps());
-            user.setStatut(PraticienStatut.ACTIF);
+            user.setStatut("ACTIF");
         } else {
             user.setDateNaissance(req.dateNaissance());
             user.setNss(req.nss());
         }
 
         User saved = userRepository.save(user);
-        String token = jwtService.generateToken(saved.getUserId(), saved.getEmail(), saved.getType().name(), saved.getName());
+        String token = jwtService.generateToken(saved.getUserId(), saved.getEmail(), saved.getType(), saved.getName());
         return new AuthResponse(UserResponse.from(saved), token);
     }
 
@@ -79,11 +79,10 @@ public class UserService {
             .orElseThrow(() -> new ApiException("InvalidCredentials", "Email ou mot de passe incorrect", 401));
         if (!passwordEncoder.matches(req.password(), user.getPasswordHash()))
             throw new ApiException("InvalidCredentials", "Email ou mot de passe incorrect", 401);
-        String token = jwtService.generateToken(user.getUserId(), user.getEmail(), user.getType().name(), user.getName());
+        String token = jwtService.generateToken(user.getUserId(), user.getEmail(), user.getType(), user.getName());
         return new AuthResponse(UserResponse.from(user), token);
     }
 
-    @Transactional(readOnly = true)
     public UserResponse getProfile(String userId) {
         User user = userRepository.findById(userId)
             .orElseThrow(() -> new ApiException("NotFound", "Utilisateur non trouvé", 404));
@@ -91,65 +90,50 @@ public class UserService {
     }
 
     public UserResponse updateProfile(String userId, UpdateProfileRequest req) {
-        User user = userRepository.findById(userId)
-            .orElseThrow(() -> new ApiException("NotFound", "Utilisateur non trouvé", 404));
-        if (req.firstName() != null) user.setFirstName(req.firstName());
-        if (req.lastName() != null) user.setLastName(req.lastName());
-        if (req.name() != null) user.setName(req.name());
-        if (req.dateNaissance() != null) user.setDateNaissance(req.dateNaissance());
-        if (req.nss() != null) user.setNss(req.nss());
-        if (req.specialite() != null) user.setSpecialite(req.specialite());
-        if (req.rpps() != null) user.setRpps(req.rpps());
-        if (req.statut() != null && user.getType() == UserType.PRATICIEN) {
-            user.setStatut(PraticienStatut.valueOf(req.statut()));
-        }
-        return UserResponse.from(userRepository.save(user));
+        if (!userRepository.findById(userId).isPresent())
+            throw new ApiException("NotFound", "Utilisateur non trouvé", 404);
+        Map<String, Object> updates = new HashMap<>();
+        if (req.firstName() != null) updates.put("firstName", req.firstName());
+        if (req.lastName() != null) updates.put("lastName", req.lastName());
+        if (req.name() != null) updates.put("name", req.name());
+        if (req.dateNaissance() != null) updates.put("dateNaissance", req.dateNaissance());
+        if (req.nss() != null) updates.put("nss", req.nss());
+        if (req.specialite() != null) updates.put("specialite", req.specialite());
+        if (req.rpps() != null) updates.put("rpps", req.rpps());
+        if (req.statut() != null) updates.put("statut", req.statut());
+        User updated = userRepository.update(userId, updates);
+        return UserResponse.from(updated);
     }
 
     public UserResponse setMedecinTraitant(String patientId, String medecinTraitantId) {
         User patient = userRepository.findById(patientId)
             .orElseThrow(() -> new ApiException("NotFound", "Patient non trouvé", 404));
-        if (patient.getType() != UserType.PATIENT)
+        if (!"PATIENT".equals(patient.getType()))
             throw new ApiException("Forbidden", "Seul un patient peut désigner son médecin traitant", 403);
         User medecin = userRepository.findById(medecinTraitantId)
             .orElseThrow(() -> new ApiException("NotFound", "Praticien non trouvé", 404));
-        if (medecin.getType() != UserType.PRATICIEN)
+        if (!"PRATICIEN".equals(medecin.getType()))
             throw new ApiException("NotFound", "Praticien non trouvé", 404);
-        if (medecin.getStatut() != PraticienStatut.ACTIF)
+        if (!"ACTIF".equals(medecin.getStatut()))
             throw new ApiException("PractitionerNotAvailableException", "Le praticien n'est pas disponible", 409);
-        patient.setMedecinTraitantId(medecinTraitantId);
-        return UserResponse.from(userRepository.save(patient));
+        User updated = userRepository.update(patientId, Map.of("medecinTraitantId", medecinTraitantId));
+        return UserResponse.from(updated);
     }
 
     public UserResponse updatePraticienStatut(String praticienId, String statut) {
         User praticien = userRepository.findById(praticienId)
             .orElseThrow(() -> new ApiException("NotFound", "Praticien non trouvé", 404));
-        if (praticien.getType() != UserType.PRATICIEN)
+        if (!"PRATICIEN".equals(praticien.getType()))
             throw new ApiException("Forbidden", "Seul un praticien peut modifier son statut", 403);
-        try {
-            praticien.setStatut(PraticienStatut.valueOf(statut));
-        } catch (IllegalArgumentException e) {
-            throw new ApiException("ValidationError", "statut doit être ACTIF, EN_CONGE ou INACTIF", 400);
-        }
-        return UserResponse.from(userRepository.save(praticien));
+        if (!statut.matches("ACTIF|EN_CONGE|INACTIF"))
+            throw new ApiException("ValidationError", "statut invalide", 400);
+        User updated = userRepository.update(praticienId, Map.of("statut", statut));
+        return UserResponse.from(updated);
     }
 
-    @Transactional(readOnly = true)
     public PagedResponse<UserResponse> listPraticiens(String specialite, String statut, int page, int limit) {
-        PageRequest pr = PageRequest.of(page - 1, limit);
-        Page<User> result;
-        if (specialite != null && statut != null) {
-            result = userRepository.findByTypeAndSpecialiteContainingIgnoreCaseAndStatut(
-                UserType.PRATICIEN, specialite, PraticienStatut.valueOf(statut), pr);
-        } else if (specialite != null) {
-            result = userRepository.findByTypeAndSpecialiteContainingIgnoreCase(UserType.PRATICIEN, specialite, pr);
-        } else if (statut != null) {
-            result = userRepository.findByTypeAndStatut(UserType.PRATICIEN, PraticienStatut.valueOf(statut), pr);
-        } else {
-            result = userRepository.findByType(UserType.PRATICIEN, pr);
-        }
-        return new PagedResponse<>(
-            result.getContent().stream().map(UserResponse::from).toList(),
-            result.getTotalElements(), page, limit);
+        List<User> praticiens = userRepository.listPraticiens(specialite, statut, page, limit);
+        List<UserResponse> items = praticiens.stream().map(UserResponse::from).toList();
+        return new PagedResponse<>(items, items.size(), page, limit);
     }
 }

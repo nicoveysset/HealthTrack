@@ -1,88 +1,59 @@
 package com.healthtrack.utilisateurs.model;
 
-import jakarta.persistence.*;
-import java.time.Instant;
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.*;
 
-@Entity
-@Table(name = "utilisateurs")
+@DynamoDbBean
 public class User {
-
-    @Id
-    @Column(name = "user_id", length = 36)
     private String userId;
-
-    @Column(nullable = false, unique = true)
     private String email;
-
-    @Column(name = "password_hash", nullable = false)
     private String passwordHash;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private UserType type;
-
+    private String type; // PRATICIEN ou PATIENT
     private String name;
     private String firstName;
     private String lastName;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt;
-
-    @Column(name = "updated_at", nullable = false)
-    private Instant updatedAt;
-
-    // Champs praticien
+    private String createdAt;
+    private String updatedAt;
     private String specialite;
     private String rpps;
-
-    @Enumerated(EnumType.STRING)
-    private PraticienStatut statut;
-
-    // Champs patient
+    private String statut; // ACTIF, EN_CONGE, INACTIF
     private String dateNaissance;
     private String nss;
     private String medecinTraitantId;
 
-    @PrePersist
-    protected void onCreate() {
-        createdAt = Instant.now();
-        updatedAt = Instant.now();
-    }
-
-    @PreUpdate
-    protected void onUpdate() {
-        updatedAt = Instant.now();
-    }
-
-    // Getters / Setters
+    @DynamoDbPartitionKey
+    @DynamoDbAttribute("userId")
     public String getUserId() { return userId; }
-    public void setUserId(String userId) { this.userId = userId; }
+    public void setUserId(String v) { userId = v; }
+
+    @DynamoDbSecondaryPartitionKey(indexNames = "byEmail")
+    @DynamoDbAttribute("email")
     public String getEmail() { return email; }
-    public void setEmail(String email) { this.email = email; }
-    public String getPasswordHash() { return passwordHash; }
-    public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
-    public UserType getType() { return type; }
-    public void setType(UserType type) { this.type = type; }
-    public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
-    public String getFirstName() { return firstName; }
-    public void setFirstName(String firstName) { this.firstName = firstName; }
-    public String getLastName() { return lastName; }
-    public void setLastName(String lastName) { this.lastName = lastName; }
-    public Instant getCreatedAt() { return createdAt; }
-    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
-    public Instant getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(Instant updatedAt) { this.updatedAt = updatedAt; }
-    public String getSpecialite() { return specialite; }
-    public void setSpecialite(String specialite) { this.specialite = specialite; }
-    public String getRpps() { return rpps; }
-    public void setRpps(String rpps) { this.rpps = rpps; }
-    public PraticienStatut getStatut() { return statut; }
-    public void setStatut(PraticienStatut statut) { this.statut = statut; }
-    public String getDateNaissance() { return dateNaissance; }
-    public void setDateNaissance(String dateNaissance) { this.dateNaissance = dateNaissance; }
-    public String getNss() { return nss; }
-    public void setNss(String nss) { this.nss = nss; }
-    public String getMedecinTraitantId() { return medecinTraitantId; }
-    public void setMedecinTraitantId(String medecinTraitantId) { this.medecinTraitantId = medecinTraitantId; }
+    public void setEmail(String v) { email = v; }
+
+    @DynamoDbAttribute("passwordHash") public String getPasswordHash() { return passwordHash; }
+    public void setPasswordHash(String v) { passwordHash = v; }
+    @DynamoDbAttribute("type") public String getType() { return type; }
+    public void setType(String v) { type = v; }
+    @DynamoDbAttribute("name") public String getName() { return name; }
+    public void setName(String v) { name = v; }
+    @DynamoDbAttribute("firstName") public String getFirstName() { return firstName; }
+    public void setFirstName(String v) { firstName = v; }
+    @DynamoDbAttribute("lastName") public String getLastName() { return lastName; }
+    public void setLastName(String v) { lastName = v; }
+    @DynamoDbAttribute("createdAt") public String getCreatedAt() { return createdAt; }
+    public void setCreatedAt(String v) { createdAt = v; }
+    @DynamoDbAttribute("updatedAt") public String getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(String v) { updatedAt = v; }
+    @DynamoDbAttribute("specialite") public String getSpecialite() { return specialite; }
+    public void setSpecialite(String v) { specialite = v; }
+    @DynamoDbAttribute("rpps") public String getRpps() { return rpps; }
+    public void setRpps(String v) { rpps = v; }
+    @DynamoDbAttribute("statut") public String getStatut() { return statut; }
+    public void setStatut(String v) { statut = v; }
+    @DynamoDbAttribute("dateNaissance") public String getDateNaissance() { return dateNaissance; }
+    public void setDateNaissance(String v) { dateNaissance = v; }
+    @DynamoDbAttribute("nss") public String getNss() { return nss; }
+    public void setNss(String v) { nss = v; }
+    @DynamoDbAttribute("medecinTraitantId") public String getMedecinTraitantId() { return medecinTraitantId; }
+    public void setMedecinTraitantId(String v) { medecinTraitantId = v; }
 }

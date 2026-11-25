@@ -17,14 +17,12 @@ import java.util.List;
 
 @RestController
 public class RdvController {
-
     private final RdvService service;
     public RdvController(RdvService service) { this.service = service; }
 
     private String uid() {
         Authentication a = SecurityContextHolder.getContext().getAuthentication();
-        if (a == null || "anonymousUser".equals(a.getPrincipal()))
-            throw new ApiException("Unauthorized", "Non autorisé", 401);
+        if (a == null || "anonymousUser".equals(a.getPrincipal())) throw new ApiException("Unauthorized", "Non autorisé", 401);
         return a.getPrincipal().toString();
     }
     private String utype() {
@@ -33,7 +31,6 @@ public class RdvController {
         return null;
     }
 
-    // Disponibilités
     @PutMapping("/praticiens/me/disponibilites")
     public List<Disponibilite> setDispos(@RequestBody DisponibilitesRequest req) {
         requirePraticien();
@@ -44,7 +41,6 @@ public class RdvController {
     @GetMapping("/praticiens/{id}/disponibilites")
     public List<Disponibilite> getDispos(@PathVariable String id) { return service.getDisponibilites(id); }
 
-    // Indisponibilités
     @PostMapping("/praticiens/me/indisponibilites")
     public ResponseEntity<Indisponibilite> createIndispo(@Valid @RequestBody IndisponibiliteRequest req) {
         requirePraticien();
@@ -58,14 +54,11 @@ public class RdvController {
         return ResponseEntity.noContent().build();
     }
 
-    // Créneaux
     @GetMapping("/praticiens/{id}/creneaux")
-    public List<Creneau> getCreneaux(@PathVariable String id,
-                                     @RequestParam String dateDebut, @RequestParam String dateFin) {
+    public List<Creneau> getCreneaux(@PathVariable String id, @RequestParam String dateDebut, @RequestParam String dateFin) {
         return service.calculateCreneaux(id, dateDebut, dateFin);
     }
 
-    // RDV
     @PostMapping("/rendezvous")
     public ResponseEntity<RendezVous> createRdv(@Valid @RequestBody RendezVousRequest req) {
         return ResponseEntity.status(HttpStatus.CREATED).body(service.createRendezVous(uid(), req));
@@ -76,18 +69,12 @@ public class RdvController {
                                              @RequestParam(defaultValue = "10") int limit) {
         return service.listRendezVous(uid(), utype(), statut, page, limit);
     }
-    @PostMapping("/rendezvous/{id}/confirmer")
-    public RendezVous confirmer(@PathVariable String id) { return service.updateStatut(id, RendezVousStatut.CONFIRME, uid(), utype()); }
-    @PostMapping("/rendezvous/{id}/annuler")
-    public RendezVous annuler(@PathVariable String id) { return service.updateStatut(id, RendezVousStatut.ANNULE, uid(), utype()); }
-    @PostMapping("/rendezvous/{id}/en-cours")
-    public RendezVous enCours(@PathVariable String id) { return service.updateStatut(id, RendezVousStatut.EN_COURS, uid(), utype()); }
-    @PostMapping("/rendezvous/{id}/termine")
-    public RendezVous termine(@PathVariable String id) { return service.updateStatut(id, RendezVousStatut.TERMINE, uid(), utype()); }
-    @PostMapping("/rendezvous/{id}/non-venu")
-    public RendezVous nonVenu(@PathVariable String id) { return service.updateStatut(id, RendezVousStatut.NON_VENU, uid(), utype()); }
+    @PostMapping("/rendezvous/{id}/confirmer") public RendezVous confirmer(@PathVariable String id) { return service.updateStatut(id, "CONFIRME", uid(), utype()); }
+    @PostMapping("/rendezvous/{id}/annuler") public RendezVous annuler(@PathVariable String id) { return service.updateStatut(id, "ANNULE", uid(), utype()); }
+    @PostMapping("/rendezvous/{id}/en-cours") public RendezVous enCours(@PathVariable String id) { return service.updateStatut(id, "EN_COURS", uid(), utype()); }
+    @PostMapping("/rendezvous/{id}/termine") public RendezVous termine(@PathVariable String id) { return service.updateStatut(id, "TERMINE", uid(), utype()); }
+    @PostMapping("/rendezvous/{id}/non-venu") public RendezVous nonVenu(@PathVariable String id) { return service.updateStatut(id, "NON_VENU", uid(), utype()); }
 
-    // Comptes rendus
     @PostMapping("/rendezvous/{id}/compte-rendu")
     public ResponseEntity<CompteRendu> createCR(@PathVariable String id, @Valid @RequestBody CompteRenduRequest req) {
         requirePraticien();

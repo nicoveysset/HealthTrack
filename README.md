@@ -1,143 +1,98 @@
-# HealthTrack — Projet Maven / Spring Boot
+# HealthTrack — Java / Spring Boot / AWS Lambda + DynamoDB
 
-Application de gestion de cabinet médical composée de **4 microservices Spring Boot** indépendants,
-chacun avec sa propre base H2 embarquée, sa documentation Swagger et son authentification JWT.
+4 microservices Spring Boot déployables sur **AWS Lambda + API Gateway**, avec **DynamoDB** comme base de données partagée.
 
-## Architecture
+## Architecture AWS
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                      Frontend (React/Vite)                   │
-│                           frontend/                          │
-└──────────────────────────┬───────────────────────────────────┘
-                           │ HTTP + JWT (Bearer)
-       ┌───────────────────┼───────────────────┐
-       ▼                   ▼                   ▼
-┌─────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-│ :8081       │   │ :8082        │   │ :8083        │   │ :8084        │
-│ Utilisateurs│   │ Dispo/RDV    │   │ Dossiers     │   │ Ordonnances  │
-│             │   │              │   │ Médicaux     │   │              │
-│ H2 embarqué │   │ H2 embarqué  │   │ H2 embarqué  │   │ H2 embarqué  │
-│ Swagger UI  │   │ Swagger UI   │   │ Swagger UI   │   │ Swagger UI   │
-└─────────────┘   └──────────────┘   └──────────────┘   └──────────────┘
+Frontend (S3 + CloudFront)
+        │  HTTPS + JWT
+        ▼
+API Gateway (HTTP API v2) ×4 ──► Lambda Spring Boot ──► DynamoDB (12 tables partagées)
+                                   │
+                                   └──► CloudWatch Logs
 ```
+
+| Service | Lambda handler | Table(s) DynamoDB |
+|---------|---------------|-------------------|
+| Utilisateurs | `com.healthtrack.utilisateurs.LambdaHandler` | `healthtrack-utilisateurs` |
+| Dispo/RDV | `com.healthtrack.rdv.LambdaHandler` | `healthtrack-disponibilites`, `healthtrack-indisponibilites`, `healthtrack-rendezvous`, `healthtrack-comptes-rendus` |
+| Dossiers | `com.healthtrack.dossiers.LambdaHandler` | `healthtrack-dossiers-medicaux`, `healthtrack-antecedents`, `healthtrack-allergies`, `healthtrack-vaccinations` |
+| Ordonnances | `com.healthtrack.ordonnances.LambdaHandler` | `healthtrack-ordonnances`, `healthtrack-lignes-prescription`, `healthtrack-medicaments` |
 
 ## Prérequis
 
-- **Java 21+** (JDK complet avec `javac`)
-- **Maven 3.8+**
+- Java 21+ (JDK complet), Maven 3.8+
+- AWS CLI configuré (`aws configure`) avec les droits Lambda, API Gateway, DynamoDB, IAM
 
-## Compilation
-
-```bash
-mvn clean compile
-```
-
-## Lancement d'un service
+## Build
 
 ```bash
-# API Utilisateurs (port 8081)
-mvn spring-boot:run -pl api-utilisateurs
-
-# API Disponibilités/RDV (port 8082)
-mvn spring-boot:run -pl api-disponibilites-rdv
-
-# API Dossiers Médicaux (port 8083)
-mvn spring-boot:run -pl api-dossiers-medicaux
-
-# API Ordonnances (port 8084)
-mvn spring-boot:run -pl api-ordonnances
+mvn clean package -DskipTests
 ```
 
-## Documentation Swagger (par service)
+Génère un fat JAR par module dans `api-*/target/*.jar`, prêt à être uploadé sur Lambda.
 
-| Service | Swagger UI | API Docs |
-|---------|-----------|----------|
-| Utilisateurs | http://localhost:8081/swagger-ui.html | http://localhost:8081/v3/api-docs |
-| Dispo/RDV | http://localhost:8082/swagger-ui.html | http://localhost:8082/v3/api-docs |
-| Dossiers | http://localhost:8083/swagger-ui.html | http://localhost:8083/v3/api-docs |
-| Ordonnances | http://localhost:8084/swagger-ui.html | http://localhost:8084/v3/api-docs |
+## Déploiement AWS (par service)
 
-## Authentification
+```bash
+# 1. Créer la Lambda (exemple pour api-utilisateurs)
+aws lambda create-function \
+  --function-name healthtrack-api-utilisateurs \
+  --runtime java21 \
+  --handler com.healthtrack.utilisateurs.LambdaHandler \
+  --role arn:aws:iam::<ACCOUNT>:role/healthtrack-lambda-role \
+  --jar fileb://api-utilisateurs/target/healthtrack-utilisateurs-1.0.0.jar \
+  --timeout 30 --memory-size 1024 \
+  --environment "Variables={JWT_SECRET=<secret>,AWS_REGION=eu-west-1}"
 
-1. `POST /auth/register` sur le port 8081 pour créer un compte → retourne un JWT
-2. Utiliser ce JWT dans le header `Authorization: Bearer <token>` pour toutes les autres requêtes
-
-## Structure du projet
-
-```
-HealthTrack-complet-local/
-├── pom.xml                          # POM parent (multi-modules)
-├── api-utilisateurs/                # Module 1 — Auth + profils (port 8081)
-│   ├── pom.xml
-│   └── src/main/java/com/healthtrack/utilisateurs/
-│       ├── UtilisateursApplication.java
-│       ├── controller/AuthController.java
-│       ├── service/UserService.java
-│       ├── repository/UserRepository.java
-│       ├── model/                   # User, UserType, PraticienStatut
-│       ├── dto/                     # RegisterRequest, LoginRequest, etc.
-│       ├── config/                  # SecurityConfig, JwtService, JwtAuthFilter
-│       └── exception/               # ApiException, GlobalExceptionHandler
-├── api-disponibilites-rdv/          # Module 2 — Dispo, RDV, CR (port 8082)
-├── api-dossiers-medicaux/           # Module 3 — Dossiers, antécédents, allergies (port 8083)
-├── api-ordonnances/                 # Module 4 — Ordonnances, médicaments (port 8084)
-├── frontend/                        # Frontend React (inchangé)
-├── docs/                            # Contrats OpenAPI (inchangé)
-└── infrastructure/                  # Scripts AWS CLI (inchangé)
+# 2. Créer l'API Gateway HTTP API et l'intégrer à la Lambda
+# 3. Répéter pour les 3 autres services
 ```
 
-## Endpoints par service
+Les scripts dans `infrastructure/` (deploy-lambdas.sh, deploy-apigateway.sh, deploy-dynamodb.sh) peuvent être adaptés pour automatiser ces étapes.
 
-### API Utilisateurs (:8081)
-- `POST /auth/register` — Inscription
-- `POST /auth/login` — Connexion
-- `GET /utilisateurs/me` — Profil
-- `PATCH /utilisateurs/me` — Mise à jour profil
-- `PUT /patients/me/medecin-traitant` — Désigner médecin traitant
-- `PATCH /praticiens/me/statut` — Changer statut praticien
-- `GET /praticiens` — Lister praticiens (filtré/paginé)
+## Variables d'environnement (Lambda)
 
-### API Disponibilités/RDV (:8082)
-- `PUT/GET /praticiens/me/disponibilites` — Gérer disponibilités
-- `GET /praticiens/{id}/disponibilites` — Voir dispo d'un praticien
-- `POST/GET /praticiens/me/indisponibilites` — Indisponibilités
-- `DELETE /indisponibilites/{id}` — Supprimer indispo
-- `GET /praticiens/{id}/creneaux?dateDebut=&dateFin=` — Créneaux libres
-- `POST /rendezvous` — Prendre RDV
-- `GET /rendezvous` — Lister ses RDV
-- `POST /rendezvous/{id}/confirmer|annuler|en-cours|termine|non-venu` — Transitions
-- `POST/GET /rendezvous/{id}/compte-rendu` — Compte rendu
+| Variable | Description |
+|----------|-------------|
+| `JWT_SECRET` | Clé secrète JWT (partagée entre les 4 Lambdas) |
+| `AWS_REGION` | Région AWS (défaut: eu-west-1) |
 
-### API Dossiers Médicaux (:8083)
-- `GET /patients/{id}/dossier` — Dossier complet
-- `POST /dossiers/{id}/antecedents` — Créer antécédent
-- `PATCH /antecedents/{id}` — Modifier antécédent
-- `POST /antecedents/{id}/archiver` — Archiver
-- `GET /patients/{id}/antecedents` — Lister antécédents
-- `POST /dossiers/{id}/allergies` — Créer allergie
-- `DELETE /allergies/{id}` — Supprimer allergie
-- `GET /patients/{id}/allergies` — Lister allergies
-- `POST /dossiers/{id}/vaccinations` — Créer vaccination
-- `GET /patients/{id}/vaccinations` — Lister vaccinations
+## Développement local
 
-### API Ordonnances (:8084)
-- `POST /ordonnances` — Créer ordonnance
-- `GET /ordonnances/{id}` — Voir ordonnance + lignes
-- `GET /ordonnances` — Lister ordonnances
-- `POST /ordonnances/{id}/lignes` — Ajouter ligne
-- `DELETE /ordonnances/{id}/lignes/{ligneId}` — Supprimer ligne
-- `GET /ordonnances/{id}/lignes` — Lister lignes
-- `GET /medicaments` — Lister médicaments
-- `POST /medicaments` — Créer médicament
+```bash
+# Lancer un service en local (sans DynamoDB réel — nécessite DynamoDB Local ou LocalStack)
+mvn spring-boot:run -pl api-utilisateurs    # port 8081
+mvn spring-boot:run -pl api-disponibilites-rdv  # port 8082
+mvn spring-boot:run -pl api-dossiers-medicaux   # port 8083
+mvn spring-boot:run -pl api-ordonnances         # port 8084
+```
 
-## Variables d'environnement
+> En local, pointer vers **DynamoDB Local** : `aws dynamodb --endpoint-url http://localhost:8000 ...`
 
-| Variable | Défaut | Description |
-|----------|--------|-------------|
-| `JWT_SECRET` | `healthtrack-default-secret-...` | Clé secrète pour signer les JWT (à changer en prod) |
+## Swagger (local uniquement)
 
-## Base de données
+http://localhost:808{1..4}/swagger-ui.html
 
-Chaque service utilise une base **H2 en mémoire** (rien à configurer pour le dev).
-Console H2 disponible sur `/h2-console` (ex: http://localhost:8081/h2-console).
+## Structure
+
+```
+pom.xml                              # Parent multi-modules
+api-utilisateurs/                    # Lambda 1 — Auth, profils, praticiens
+api-disponibilites-rdv/              # Lambda 2 — Dispos, RDV, créneaux, CR
+api-dossiers-medicaux/               # Lambda 3 — Dossiers, antécédents, allergies
+api-ordonnances/                     # Lambda 4 — Ordonnances, médicaments
+frontend/                            # React (S3 + CloudFront)
+infrastructure/                      # Scripts AWS CLI
+docs/                                # Contrats OpenAPI
+```
+
+## Stack technique
+
+- Spring Boot 3.3.5 / Java 21
+- aws-serverless-java-container (Spring Boot sur Lambda)
+- AWS SDK v2 (DynamoDB Enhanced Client)
+- JWT (jjwt 0.12.6) — Option B (secret partagé)
+- Spring Security (stateless, filtre JWT)
+- springdoc-openapi (Swagger UI en local)

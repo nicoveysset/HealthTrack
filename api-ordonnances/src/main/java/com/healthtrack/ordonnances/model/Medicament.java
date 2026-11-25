@@ -1,22 +1,13 @@
 package com.healthtrack.ordonnances.model;
-import jakarta.persistence.*;
-import java.time.Instant;
-@Entity @Table(name = "medicaments")
+import software.amazon.awssdk.enhanced.dynamodb.mapper.annotations.*;
+@DynamoDbBean
 public class Medicament {
-    @Id @Column(length = 36) private String medicamentId;
-    @Column(nullable = false) private String nom;
-    private String substanceActive;
-    @Enumerated(EnumType.STRING) @Column(nullable = false) private MedicamentForme forme;
-    private String description;
-    @Column(nullable = false, updatable = false) private Instant createdAt;
-    @Column(nullable = false) private Instant updatedAt;
-    @PrePersist protected void onCreate() { createdAt = Instant.now(); updatedAt = Instant.now(); }
-    @PreUpdate protected void onUpdate() { updatedAt = Instant.now(); }
-    public String getMedicamentId() { return medicamentId; } public void setMedicamentId(String v) { medicamentId = v; }
-    public String getNom() { return nom; } public void setNom(String v) { nom = v; }
-    public String getSubstanceActive() { return substanceActive; } public void setSubstanceActive(String v) { substanceActive = v; }
-    public MedicamentForme getForme() { return forme; } public void setForme(MedicamentForme v) { forme = v; }
-    public String getDescription() { return description; } public void setDescription(String v) { description = v; }
-    public Instant getCreatedAt() { return createdAt; } public void setCreatedAt(Instant v) { createdAt = v; }
-    public Instant getUpdatedAt() { return updatedAt; } public void setUpdatedAt(Instant v) { updatedAt = v; }
+    private String medicamentId; private String nom; private String substanceActive; private String forme; private String description; private String createdAt; private String updatedAt;
+    @DynamoDbPartitionKey @DynamoDbAttribute("medicamentId") public String getMedicamentId() { return medicamentId; } public void setMedicamentId(String v) { medicamentId = v; }
+    @DynamoDbAttribute("nom") public String getNom() { return nom; } public void setNom(String v) { nom = v; }
+    @DynamoDbSecondaryPartitionKey(indexNames = "byForme") @DynamoDbAttribute("forme") public String getForme() { return forme; } public void setForme(String v) { forme = v; }
+    @DynamoDbAttribute("substanceActive") public String getSubstanceActive() { return substanceActive; } public void setSubstanceActive(String v) { substanceActive = v; }
+    @DynamoDbAttribute("description") public String getDescription() { return description; } public void setDescription(String v) { description = v; }
+    @DynamoDbAttribute("createdAt") public String getCreatedAt() { return createdAt; } public void setCreatedAt(String v) { createdAt = v; }
+    @DynamoDbAttribute("updatedAt") public String getUpdatedAt() { return updatedAt; } public void setUpdatedAt(String v) { updatedAt = v; }
 }

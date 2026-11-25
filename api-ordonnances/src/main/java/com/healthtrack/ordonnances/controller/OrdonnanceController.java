@@ -32,8 +32,6 @@ public class OrdonnanceController {
 
     @PostMapping("/ordonnances")
     public ResponseEntity<Ordonnance> create(@Valid @RequestBody OrdonnanceRequest req) {
-        // En production: récupérer le compte rendu via API RDV pour obtenir patientId
-        // Simplifié: on passe patientId via header ou body
         return ResponseEntity.status(HttpStatus.CREATED).body(service.createOrdonnance(req.compteRenduId(), uid(), uid()));
     }
     @GetMapping("/ordonnances/{id}")
@@ -57,10 +55,9 @@ public class OrdonnanceController {
     public List<LignePrescription> listLignes(@PathVariable String id) { return service.listLignes(id, uid()); }
     @GetMapping("/medicaments")
     public PagedResponse<Medicament> listMedicaments(@RequestParam(required = false) String forme,
-                                                     @RequestParam(required = false) String search,
                                                      @RequestParam(defaultValue = "1") int page,
                                                      @RequestParam(defaultValue = "10") int limit) {
-        return service.listMedicaments(forme, search, page, limit);
+        return service.listMedicaments(forme, page, limit);
     }
     @PostMapping("/medicaments")
     public ResponseEntity<Medicament> createMedicament(@Valid @RequestBody MedicamentRequest req) {

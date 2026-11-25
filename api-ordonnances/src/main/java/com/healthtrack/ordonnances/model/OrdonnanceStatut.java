@@ -1,2 +1,2 @@
 package com.healthtrack.ordonnances.model;
-public enum OrdonnanceStatut { ACTIVE, EXPIREE }
+public class OrdonnanceStatut { public static final String ACTIVE = "ACTIVE"; public static final String EXPIREE = "EXPIREE"; }

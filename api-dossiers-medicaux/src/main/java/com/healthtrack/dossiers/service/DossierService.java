@@ -7,46 +7,39 @@ import com.healthtrack.dossiers.repository.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
 @Service
-@Transactional
 public class DossierService {
     private static final Logger log = LoggerFactory.getLogger(DossierService.class);
-
     private final DossierRepository dossierRepo;
     private final AntecedentRepository antecedentRepo;
     private final AllergieRepository allergieRepo;
     private final VaccinationRepository vaccinationRepo;
 
-    public DossierService(DossierRepository dossierRepo, AntecedentRepository antecedentRepo,
-                          AllergieRepository allergieRepo, VaccinationRepository vaccinationRepo) {
-        this.dossierRepo = dossierRepo; this.antecedentRepo = antecedentRepo;
-        this.allergieRepo = allergieRepo; this.vaccinationRepo = vaccinationRepo;
+    public DossierService(DossierRepository d, AntecedentRepository a, AllergieRepository al, VaccinationRepository v) {
+        this.dossierRepo = d; this.antecedentRepo = a; this.allergieRepo = al; this.vaccinationRepo = v;
     }
 
     private void checkAccess(String patientId, String userId, String userType) {
         if ("PATIENT".equals(userType) && !userId.equals(patientId))
             throw new ApiException("AccessDeniedException", "Accès refusé", 403);
-        // Pour praticien: vérifier via RDV TERMINE (simplifié ici - en prod appeler l'API RDV)
-        if ("PRATICIEN".equals(userType) && !userId.equals(patientId))
-            log.info("Vérification accès praticien {} pour patient {}", userId, patientId);
     }
 
     public DossierComplet getDossierComplet(String patientId, String userId, String userType) {
         checkAccess(patientId, userId, userType);
-        DossierMedical dossier = dossierRepo.findById(patientId)
-            .orElseGet(() -> {
-                if (userId.equals(patientId)) {
-                    DossierMedical d = new DossierMedical();
-                    d.setPatientId(patientId); d.setGroupeSanguin("");
-                    return dossierRepo.save(d);
-                }
-                throw new ApiException("NotFound", "Dossier non trouvé", 404);
-            });
+        DossierMedical dossier = dossierRepo.findById(patientId).orElseGet(() -> {
+            if (userId.equals(patientId)) {
+                String now = Instant.now().toString();
+                DossierMedical d = new DossierMedical();
+                d.setPatientId(patientId); d.setGroupeSanguin(""); d.setDateCreation(now); d.setUpdatedAt(now);
+                return dossierRepo.save(d);
+            }
+            throw new ApiException("NotFound", "Dossier non trouvé", 404);
+        });
         return new DossierComplet(dossier,
             antecedentRepo.findByDossierId(patientId),
             allergieRepo.findByPatientId(patientId),
@@ -55,16 +48,14 @@ public class DossierService {
 
     public Antecedent createAntecedent(String dossierId, AntecedentRequest req, String userId, String userType) {
         checkAccess(dossierId, userId, userType);
-        if (!dossierRepo.existsById(dossierId))
-            throw new ApiException("NotFound", "Dossier non trouvé", 404);
+        if (!dossierRepo.existsById(dossierId)) throw new ApiException("NotFound", "Dossier non trouvé", 404);
+        String now = Instant.now().toString();
         Antecedent a = new Antecedent();
-        a.setAntecedentId(UUID.randomUUID().toString());
-        a.setDossierId(dossierId);
-        a.setLibelle(req.libelle());
-        a.setType(AntecedentType.valueOf(req.type()));
-        a.setDate(req.date() != null ? req.date() : java.time.Instant.now().toString());
-        a.setStatut(AntecedentStatut.ACTIF);
+        a.setAntecedentId(UUID.randomUUID().toString()); a.setDossierId(dossierId);
+        a.setLibelle(req.libelle()); a.setType(req.type());
+        a.setDate(req.date() != null ? req.date() : now); a.setStatut("ACTIF");
         a.setDescription(req.description() != null ? req.description() : "");
+        a.setCreatedAt(now); a.setUpdatedAt(now);
         return antecedentRepo.save(a);
     }
 
@@ -74,34 +65,32 @@ public class DossierService {
         if (req.libelle() != null) a.setLibelle(req.libelle());
         if (req.date() != null) a.setDate(req.date());
         if (req.description() != null) a.setDescription(req.description());
+        a.setUpdatedAt(Instant.now().toString());
         return antecedentRepo.save(a);
     }
 
     public Antecedent archiveAntecedent(String id, String userId, String userType) {
         Antecedent a = antecedentRepo.findById(id).orElseThrow(() -> new ApiException("NotFound", "Antécédent non trouvé", 404));
         checkAccess(a.getDossierId(), userId, userType);
-        if (a.getType() == AntecedentType.CHRONIQUE)
+        if ("CHRONIQUE".equals(a.getType()))
             throw new ApiException("ChronicConditionCannotBeArchivedException", "Antécédent chronique non archivable", 409);
-        a.setStatut(AntecedentStatut.ARCHIVE);
+        a.setStatut("ARCHIVE"); a.setUpdatedAt(Instant.now().toString());
         return antecedentRepo.save(a);
     }
 
-    public List<Antecedent> listAntecedents(String patientId, String userId, String userType) {
-        checkAccess(patientId, userId, userType);
-        return antecedentRepo.findByDossierId(patientId);
-    }
+    public List<Antecedent> listAntecedents(String pid, String uid, String utype) { checkAccess(pid, uid, utype); return antecedentRepo.findByDossierId(pid); }
 
     public Allergie createAllergie(String dossierId, AllergieRequest req, String userId, String userType) {
         checkAccess(dossierId, userId, userType);
+        String now = Instant.now().toString();
         Allergie a = new Allergie();
-        a.setAllergieId(UUID.randomUUID().toString());
-        a.setPatientId(dossierId);
-        a.setMedicamentConcerne(req.medicamentConcerne());
-        a.setSeverite(AllergieSeverite.valueOf(req.severite()));
-        a.setDateDecouverte(req.dateDecouverte() != null ? req.dateDecouverte() : java.time.Instant.now().toString());
+        a.setAllergieId(UUID.randomUUID().toString()); a.setPatientId(dossierId);
+        a.setMedicamentConcerne(req.medicamentConcerne()); a.setSeverite(req.severite());
+        a.setDateDecouverte(req.dateDecouverte() != null ? req.dateDecouverte() : now);
         a.setDescription(req.description() != null ? req.description() : "");
+        a.setCreatedAt(now); a.setUpdatedAt(now);
         Allergie saved = allergieRepo.save(a);
-        log.info("{{\"event\":\"ALLERGIE_CREATED\",\"allergieId\":\"{}\",\"patientId\":\"{}\",\"praticien\":\"{}\"}}", saved.getAllergieId(), dossierId, userId);
+        log.info("{\"event\":\"ALLERGIE_CREATED\",\"allergieId\":\"{}\",\"patientId\":\"{}\"}", saved.getAllergieId(), dossierId);
         return saved;
     }
 
@@ -109,30 +98,22 @@ public class DossierService {
         Allergie a = allergieRepo.findById(id).orElseThrow(() -> new ApiException("NotFound", "Allergie non trouvée", 404));
         checkAccess(a.getPatientId(), userId, userType);
         allergieRepo.deleteById(id);
-        log.info("{{\"event\":\"ALLERGIE_DELETED\",\"allergieId\":\"{}\",\"praticien\":\"{}\"}}", id, userId);
+        log.info("{\"event\":\"ALLERGIE_DELETED\",\"allergieId\":\"{}\"}", id);
     }
 
-    public List<Allergie> listAllergies(String patientId, String userId, String userType) {
-        checkAccess(patientId, userId, userType);
-        return allergieRepo.findByPatientId(patientId);
-    }
+    public List<Allergie> listAllergies(String pid, String uid, String utype) { checkAccess(pid, uid, utype); return allergieRepo.findByPatientId(pid); }
 
     public Vaccination createVaccination(String dossierId, VaccinationRequest req, String userId, String userType) {
         checkAccess(dossierId, userId, userType);
-        if (!dossierRepo.existsById(dossierId))
-            throw new ApiException("NotFound", "Dossier non trouvé", 404);
+        if (!dossierRepo.existsById(dossierId)) throw new ApiException("NotFound", "Dossier non trouvé", 404);
+        String now = Instant.now().toString();
         Vaccination v = new Vaccination();
-        v.setVaccinationId(UUID.randomUUID().toString());
-        v.setDossierId(dossierId);
-        v.setNomVaccin(req.nomVaccin());
-        v.setDate(req.date());
-        v.setRappelPrevu(req.rappelPrevu());
+        v.setVaccinationId(UUID.randomUUID().toString()); v.setDossierId(dossierId);
+        v.setNomVaccin(req.nomVaccin()); v.setDate(req.date()); v.setRappelPrevu(req.rappelPrevu());
         v.setDescription(req.description() != null ? req.description() : "");
+        v.setCreatedAt(now); v.setUpdatedAt(now);
         return vaccinationRepo.save(v);
     }
 
-    public List<Vaccination> listVaccinations(String patientId, String userId, String userType) {
-        checkAccess(patientId, userId, userType);
-        return vaccinationRepo.findByDossierId(patientId);
-    }
+    public List<Vaccination> listVaccinations(String pid, String uid, String utype) { checkAccess(pid, uid, utype); return vaccinationRepo.findByDossierId(pid); }
 }
