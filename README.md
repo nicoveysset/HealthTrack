@@ -1,325 +1,143 @@
-# HealthTrack — Gestion de cabinet médical
+# HealthTrack — Projet Maven / Spring Boot
 
-**Solution complète pour la gestion des rendez-vous, dossiers médicaux, ordonnances et disponibilités sur AWS.**
+Application de gestion de cabinet médical composée de **4 microservices Spring Boot** indépendants,
+chacun avec sa propre base H2 embarquée, sa documentation Swagger et son authentification JWT.
 
-## 📋 À propos
-
-HealthTrack est une application web conçue pour les **cabinets médicaux** qui permet de gérer :
-- Les **utilisateurs** (patients et praticiens)
-- Les **disponibilités** des praticiens
-- Les **rendez-vous** (prise, confirmation, annulation, statut)
-- Les **comptes rendus** de consultation
-- Les **dossiers médicaux** (antécédents, allergies, vaccinations)
-- Les **ordonnances** et médicaments
-
-## 🏗️ Architecture
-
-### Backend (Serverless)
+## Architecture
 
 ```
-Frontend (React) → CloudFront → S3
-        ↓
-API Gateway x4 → Lambda x4 → DynamoDB (12 tables)
-        ↓
-Cognito (Authentification)
-        ↓
-CloudWatch (Logs)
+┌──────────────────────────────────────────────────────────────┐
+│                      Frontend (React/Vite)                   │
+│                           frontend/                          │
+└──────────────────────────┬───────────────────────────────────┘
+                           │ HTTP + JWT (Bearer)
+       ┌───────────────────┼───────────────────┐
+       ▼                   ▼                   ▼
+┌─────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
+│ :8081       │   │ :8082        │   │ :8083        │   │ :8084        │
+│ Utilisateurs│   │ Dispo/RDV    │   │ Dossiers     │   │ Ordonnances  │
+│             │   │              │   │ Médicaux     │   │              │
+│ H2 embarqué │   │ H2 embarqué  │   │ H2 embarqué  │   │ H2 embarqué  │
+│ Swagger UI  │   │ Swagger UI   │   │ Swagger UI   │   │ Swagger UI   │
+└─────────────┘   └──────────────┘   └──────────────┘   └──────────────┘
 ```
 
-**Composants :**
-- **4 API Gateways** : Une par domaine métier
-- **4 Lambdas** : `api-utilisateurs`, `api-disponibilites-rdv`, `api-dossiers-medicaux`, `api-ordonnances`
-- **DynamoDB** : 12 tables avec GSIs pour les requêtes complexes
-- **Cognito** : User Pool pour l'authentification JWT
-- **S3 + CloudFront** : Hébergement statique du frontend
+## Prérequis
 
-### Frontend (React)
+- **Java 21+** (JDK complet avec `javac`)
+- **Maven 3.8+**
 
-- **Framework** : React 18 + Vite
-- **Routing** : React Router v6
-- **Authentification** : JWT avec Cognito
-- **UI** : Composants personnalisés + CSS moderne
-
-## 📁 Structure du projet
-
-```
-/healthtrack
-├── api-utilisateurs/          # API pour la gestion des utilisateurs
-│   ├── src/
-│   │   ├── handlers/          # Handlers Lambda
-│   │   ├── models/            # Modèles de données
-│   │   └── services/          # Services métier
-│   ├── package.json
-│   └── README.md
-│
-├── api-disponibilites-rdv/   # API pour les disponibilités et RDV
-│   ├── src/
-│   │   └── handlers/
-│   ├── package.json
-│   └── README.md
-│
-├── api-dossiers-medicaux/    # API pour les dossiers médicaux
-│   ├── src/
-│   │   └── handlers/
-│   ├── package.json
-│   └── README.md
-│
-├── api-ordonnances/           # API pour les ordonnances
-│   ├── src/
-│   │   └── handlers/
-│   ├── package.json
-│   └── README.md
-│
-├── frontend/                  # Application React
-│   ├── public/
-│   ├── src/
-│   │   ├── components/        # Composants React
-│   │   ├── pages/             # Pages
-│   │   ├── services/          # Services API
-│   │   └── styles/            # Styles CSS
-│   ├── package.json
-│   └── vite.config.js
-│
-├── infrastructure/            # Scripts de déploiement AWS
-│   ├── deploy-all.sh          # Script principal
-│   ├── deploy-cognito.sh
-│   ├── deploy-dynamodb.sh
-│   ├── deploy-lambdas.sh
-│   ├── deploy-apigateway.sh
-│   ├── deploy-frontend.sh
-│   ├── cleanup.sh             # Nettoyage des ressources
-│   └── README.md
-│
-├── docs/                      # Documentation
-│   └── contrats.md            # Contrats API et schéma DynamoDB
-│
-├── .gitignore
-├── PLAN.md                    # Plan complet du projet
-├── MISTRAL.md                 # Tâches à accomplir
-└── README.md                  # Ce fichier
-```
-
-## 🚀 Déploiement
-
-### Prérequis
-
-1. **Compte AWS** avec permissions administrateur
-2. **AWS CLI** installé et configuré
-   ```bash
-   aws --version
-   aws configure
-   ```
-3. **Node.js 18+**
-4. **jq** installé (pour parser JSON)
-   ```bash
-   # Ubuntu/Debian
-   sudo apt-get install jq
-   
-   # macOS
-   brew install jq
-   ```
-
-### Étapes de déploiement
-
-1. **Cloner le dépôt**
-   ```bash
-   git clone <url-du-repo>
-   cd healthtrack
-   ```
-
-2. **Déployer l'infrastructure**
-   ```bash
-   cd infrastructure
-   chmod +x *.sh
-   ./deploy-all.sh
-   ```
-
-3. **Configurer le frontend**
-   - Mettre à jour les URLs des APIs dans `frontend/src/main.jsx`
-   - Builder le frontend :
-     ```bash
-     cd ../frontend
-     npm install
-     npm run build
-     ```
-   - Uploader le build :
-     ```bash
-     cd ../infrastructure
-     ./deploy-frontend.sh
-     ```
-
-4. **Accéder à l'application**
-   - Frontend : URL CloudFront affichée à la fin du déploiement
-   - APIs : URLs des API Gateways
-
-### Déploiement manuel
-
-Si vous préférez déployer étape par étape :
+## Compilation
 
 ```bash
-# 1. Cognito
-./deploy-cognito.sh
-
-# 2. DynamoDB
-./deploy-dynamodb.sh
-
-# 3. Lambdas
-./deploy-lambdas.sh
-
-# 4. API Gateway
-./deploy-apigateway.sh
-
-# 5. Frontend
-./deploy-frontend.sh
+mvn clean compile
 ```
 
-## 🛠 Développement local
-
-### Backend (Lambdas)
-
-Chaque API est un projet Node.js indépendant :
+## Lancement d'un service
 
 ```bash
-# API Utilisateurs
-cd api-utilisateurs
-npm install
-npm run dev  # Utilise nodemon pour le développement
+# API Utilisateurs (port 8081)
+mvn spring-boot:run -pl api-utilisateurs
 
-# API RDV
-cd ../api-disponibilites-rdv
-npm install
-npm run dev
+# API Disponibilités/RDV (port 8082)
+mvn spring-boot:run -pl api-disponibilites-rdv
 
-# etc.
+# API Dossiers Médicaux (port 8083)
+mvn spring-boot:run -pl api-dossiers-medicaux
+
+# API Ordonnances (port 8084)
+mvn spring-boot:run -pl api-ordonnances
 ```
 
-### Frontend
+## Documentation Swagger (par service)
 
-```bash
-cd frontend
-npm install
-npm run dev  # Démarre le serveur de développement sur http://localhost:3000
+| Service | Swagger UI | API Docs |
+|---------|-----------|----------|
+| Utilisateurs | http://localhost:8081/swagger-ui.html | http://localhost:8081/v3/api-docs |
+| Dispo/RDV | http://localhost:8082/swagger-ui.html | http://localhost:8082/v3/api-docs |
+| Dossiers | http://localhost:8083/swagger-ui.html | http://localhost:8083/v3/api-docs |
+| Ordonnances | http://localhost:8084/swagger-ui.html | http://localhost:8084/v3/api-docs |
+
+## Authentification
+
+1. `POST /auth/register` sur le port 8081 pour créer un compte → retourne un JWT
+2. Utiliser ce JWT dans le header `Authorization: Bearer <token>` pour toutes les autres requêtes
+
+## Structure du projet
+
+```
+HealthTrack-complet-local/
+├── pom.xml                          # POM parent (multi-modules)
+├── api-utilisateurs/                # Module 1 — Auth + profils (port 8081)
+│   ├── pom.xml
+│   └── src/main/java/com/healthtrack/utilisateurs/
+│       ├── UtilisateursApplication.java
+│       ├── controller/AuthController.java
+│       ├── service/UserService.java
+│       ├── repository/UserRepository.java
+│       ├── model/                   # User, UserType, PraticienStatut
+│       ├── dto/                     # RegisterRequest, LoginRequest, etc.
+│       ├── config/                  # SecurityConfig, JwtService, JwtAuthFilter
+│       └── exception/               # ApiException, GlobalExceptionHandler
+├── api-disponibilites-rdv/          # Module 2 — Dispo, RDV, CR (port 8082)
+├── api-dossiers-medicaux/           # Module 3 — Dossiers, antécédents, allergies (port 8083)
+├── api-ordonnances/                 # Module 4 — Ordonnances, médicaments (port 8084)
+├── frontend/                        # Frontend React (inchangé)
+├── docs/                            # Contrats OpenAPI (inchangé)
+└── infrastructure/                  # Scripts AWS CLI (inchangé)
 ```
 
-### DynamoDB Local
+## Endpoints par service
 
-Pour tester sans AWS :
+### API Utilisateurs (:8081)
+- `POST /auth/register` — Inscription
+- `POST /auth/login` — Connexion
+- `GET /utilisateurs/me` — Profil
+- `PATCH /utilisateurs/me` — Mise à jour profil
+- `PUT /patients/me/medecin-traitant` — Désigner médecin traitant
+- `PATCH /praticiens/me/statut` — Changer statut praticien
+- `GET /praticiens` — Lister praticiens (filtré/paginé)
 
-```bash
-# Démarrer DynamoDB Local
-docker run -p 8000:8000 amazon/dynamodb-local
+### API Disponibilités/RDV (:8082)
+- `PUT/GET /praticiens/me/disponibilites` — Gérer disponibilités
+- `GET /praticiens/{id}/disponibilites` — Voir dispo d'un praticien
+- `POST/GET /praticiens/me/indisponibilites` — Indisponibilités
+- `DELETE /indisponibilites/{id}` — Supprimer indispo
+- `GET /praticiens/{id}/creneaux?dateDebut=&dateFin=` — Créneaux libres
+- `POST /rendezvous` — Prendre RDV
+- `GET /rendezvous` — Lister ses RDV
+- `POST /rendezvous/{id}/confirmer|annuler|en-cours|termine|non-venu` — Transitions
+- `POST/GET /rendezvous/{id}/compte-rendu` — Compte rendu
 
-# Créer les tables avec AWS CLI (endpoint local)
-aws dynamodb create-table --endpoint-url http://localhost:8000 ...
-```
+### API Dossiers Médicaux (:8083)
+- `GET /patients/{id}/dossier` — Dossier complet
+- `POST /dossiers/{id}/antecedents` — Créer antécédent
+- `PATCH /antecedents/{id}` — Modifier antécédent
+- `POST /antecedents/{id}/archiver` — Archiver
+- `GET /patients/{id}/antecedents` — Lister antécédents
+- `POST /dossiers/{id}/allergies` — Créer allergie
+- `DELETE /allergies/{id}` — Supprimer allergie
+- `GET /patients/{id}/allergies` — Lister allergies
+- `POST /dossiers/{id}/vaccinations` — Créer vaccination
+- `GET /patients/{id}/vaccinations` — Lister vaccinations
 
-### LocalStack
+### API Ordonnances (:8084)
+- `POST /ordonnances` — Créer ordonnance
+- `GET /ordonnances/{id}` — Voir ordonnance + lignes
+- `GET /ordonnances` — Lister ordonnances
+- `POST /ordonnances/{id}/lignes` — Ajouter ligne
+- `DELETE /ordonnances/{id}/lignes/{ligneId}` — Supprimer ligne
+- `GET /ordonnances/{id}/lignes` — Lister lignes
+- `GET /medicaments` — Lister médicaments
+- `POST /medicaments` — Créer médicament
 
-Émule tous les services AWS :
+## Variables d'environnement
 
-```bash
-# Démarrer LocalStack
-docker run -d -p 4566:4566 localstack/localstack
+| Variable | Défaut | Description |
+|----------|--------|-------------|
+| `JWT_SECRET` | `healthtrack-default-secret-...` | Clé secrète pour signer les JWT (à changer en prod) |
 
-# Configurer AWS CLI pour LocalStack
-aws --endpoint-url=http://localhost:4566 cognito-idp create-user-pool ...
-```
+## Base de données
 
-## 📚 Documentation
-
-- **PLAN.md** : Plan complet du projet (architecture, routes, modèle de données)
-- **MISTRAL.md** : Tâches à accomplir et suivi du développement
-- **infrastructure/README.md** : Documentation détaillée du déploiement
-- **api-utilisateurs/README.md** : Documentation de l'API Utilisateurs
-
-## 🎯 Fonctionnalités
-
-### Utilisateurs
-- ✅ Inscription (patient/praticien)
-- ✅ Connexion/Déconnexion
-- ✅ Gestion du profil
-- ✅ Désignation du médecin traitant (patient uniquement)
-- ✅ Changement de statut (praticien uniquement)
-- ✅ Recherche de praticiens (paginé/filtré)
-
-### Disponibilités & Rendez-vous
-- ✅ Définition des créneaux hebdomadaires
-- ✅ Gestion des indisponibilités ponctuelles
-- ✅ Calcul des créneaux disponibles
-- ✅ Prise de rendez-vous
-- ✅ Transitions de statut (PLANIFIE → CONFIRME → EN_COURS → TERMINE)
-- ✅ Statut NON_VENU
-- ✅ Rédaction de comptes rendus (sur RDV TERMINE uniquement)
-
-### Dossiers Médicaux
-- ✅ Consultation du dossier complet
-- ✅ CRUD des antécédents
-- ✅ Archivage des antécédents (sauf chroniques)
-- ✅ CRUD des allergies
-- ✅ Logs CloudWatch pour les modifications d'allergies
-- ✅ CRUD des vaccinations
-- ✅ Vérification d'accès (praticien doit avoir consulté le patient)
-
-### Ordonnances
-- ✅ Création d'ordonnances (sur compte rendu finalisé)
-- ✅ Expiration paresseuse (3 mois par défaut)
-- ✅ CRUD des lignes de prescription
-- ✅ Vérification des conflits d'allergies
-- ✅ Alerte CloudWatch pour durée > 90 jours
-- ✅ CRUD des médicaments
-
-## 🔒 Sécurité
-
-- **Authentification** : JWT avec Cognito
-- **Authorisation** : Vérification des rôles sur chaque route
-- **Chiffrement** : Mots de passe hashés avec BCrypt
-- **HTTPS** : Toutes les communications via HTTPS (CloudFront)
-- **CORS** : Configuré sur les API Gateways
-
-## 📊 Données
-
-### Tables DynamoDB
-
-| Table | Description | Clés | GSIs |
-|-------|-------------|------|------|
-| `healthtrack-utilisateurs` | Utilisateurs (patients + praticiens) | userId | byEmail, byMedecinTraitant |
-| `healthtrack-dossiers-medicaux` | Dossiers médicaux | patientId | - |
-| `healthtrack-antecedents` | Antécédents médicaux | antecedentId | byDossier, byDossierAndType, byStatut |
-| `healthtrack-allergies` | Allergies | allergieId | byPatient |
-| `healthtrack-vaccinations` | Vaccinations | vaccinationId | byDossier, byDossierAndNom |
-| `healthtrack-disponibilites` | Disponibilités hebdomadaires | dispoId | byPraticien, byPraticienAndJour |
-| `healthtrack-indisponibilites` | Indisponibilités ponctuelles | indispoId | byPraticien, byPraticienAndDate |
-| `healthtrack-rendezvous` | Rendez-vous | rdvId | byPraticienAndDate, byPatientAndDate, byStatut |
-| `healthtrack-comptes-rendus` | Comptes rendus | compteRenduId | byRdv, byPraticien, byPatient |
-| `healthtrack-ordonnances` | Ordonnances | ordonnanceId | byCompteRendu, byPatientAndDate, byRendezVous, byStatut |
-| `healthtrack-lignes-prescription` | Lignes de prescription | ordonnanceId (PK), ligneId (SK) | - |
-| `healthtrack-medicaments` | Médicaments | medicamentId | byForme, bySubstanceActive |
-
-## 💰 Coûts estimés (région eu-west-1)
-
-| Service | Ressource | Coût mensuel (estimation) |
-|---------|-----------|---------------------------|
-| **Cognito** | 1 User Pool, 1 App Client | ~0-5 € |
-| **DynamoDB** | 12 tables, PAY_PER_REQUEST | ~0-10 € |
-| **Lambda** | 4 fonctions, 128 Mo, 1M requêtes | ~0-5 € |
-| **API Gateway** | 4 APIs, 1M requêtes | ~3-10 € |
-| **S3** | 1 bucket, 1 Go stockage | ~0,02 € |
-| **CloudFront** | 1 distribution, 10 Go transfert | ~1-5 € |
-
-**Total estimé** : **~5-35 €/mois** (selon utilisation)
-
-## 🤝 Contribution
-
-1. Lire **MISTRAL.md** pour connaître les tâches en cours
-2. Créer une branche pour votre fonctionnalité
-3. Committer vos modifications
-4. Pousser vers la branche
-5. Créer une Pull Request
-
-## 📄 Licence
-
-MIT
-
----
-
-**Développé avec ❤️ pour les professionnels de santé.**
+Chaque service utilise une base **H2 en mémoire** (rien à configurer pour le dev).
+Console H2 disponible sur `/h2-console` (ex: http://localhost:8081/h2-console).
