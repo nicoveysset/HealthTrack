@@ -61,7 +61,17 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: Le compte appelant n'est pas le praticien du compte rendu
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                forbidden:
+                  value:
+                    error: "ForbiddenException"
+                    message: "Seul le praticien du compte rendu peut créer l'ordonnance"
+                    statusCode: 403
         '404':
           $ref: '#/components/responses/NotFound'
         '409':

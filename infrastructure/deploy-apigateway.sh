@@ -1,232 +1,162 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# =============================================================================
-# HealthTrack - Déploiement API Gateway
-# =============================================================================
-# Crée 4 API Gateways (une par Lambda) avec :
-#   - Authorizer Cognito
-#   - Routes principales
-#   - Déploiement en stage 'prod'
-# =============================================================================
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+REGION="${AWS_REGION:-eu-west-1}"
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 
-set -e
+mkdir -p "$PROJECT_ROOT"
+ENV_FILE="$PROJECT_ROOT/.env.apigateway"
+: > "$ENV_FILE"
 
-REGION="eu-west-1"
+deploy_api() {
+  local api_name="$1"
+  local function_name="$2"
+  local lambda_arn
+  local api_id
+  local integration_id
+  local route_id
+  local stage_name
+  local api_url
+  local statement_id
+  local current_policy
 
-echo "🌐 [API Gateway] Déploiement des 4 API Gateways..."
-echo ""
+  lambda_arn="$(aws lambda get-function \
+    --function-name "$function_name" \
+    --region "$REGION" \
+    --query Configuration.FunctionArn \
+    --output text)"
 
-# =============================================================================
-# Récupérer les ARNs des Lambdas
-# =============================================================================
-UTILISATEURS_LAMBDA_ARN=$(aws lambda get-function --function-name healthtrack-api-utilisateurs --region "$REGION" --query "Configuration.FunctionArn" --output text 2>/dev/null || echo "")
-RDV_LAMBDA_ARN=$(aws lambda get-function --function-name healthtrack-api-rdv --region "$REGION" --query "Configuration.FunctionArn" --output text 2>/dev/null || echo "")
-DOSSIERS_LAMBDA_ARN=$(aws lambda get-function --function-name healthtrack-api-dossiers --region "$REGION" --query "Configuration.FunctionArn" --output text 2>/dev/null || echo "")
-ORDONNANCES_LAMBDA_ARN=$(aws lambda get-function --function-name healthtrack-api-ordonnances --region "$REGION" --query "Configuration.FunctionArn" --output text 2>/dev/null || echo "")
+  api_id="$(aws apigatewayv2 get-apis \
+    --region "$REGION" \
+    --query "Items[?Name=='$api_name'].ApiId | [0]" \
+    --output text)"
 
-if [ -z "$UTILISATEURS_LAMBDA_ARN" ] || [ -z "$RDV_LAMBDA_ARN" ] || [ -z "$DOSSIERS_LAMBDA_ARN" ] || [ -z "$ORDONNANCES_LAMBDA_ARN" ]; then
-    echo "❌ Une ou plusieurs Lambdas introuvables. Exécutez d'abord deploy-lambdas.sh"
-    exit 1
-fi
-
-echo "📋 ARNs des Lambdas :"
-echo "   Utilisateurs: $UTILISATEURS_LAMBDA_ARN"
-echo "   RDV: $RDV_LAMBDA_ARN"
-echo "   Dossiers: $DOSSIERS_LAMBDA_ARN"
-echo "   Ordonnances: $ORDONNANCES_LAMBDA_ARN"
-echo ""
-
-# =============================================================================
-# Cognito (optionnel — AWS Academy bloque souvent cognito-idp:CreateUserPool)
-# En mode JWT maison (Option B du PLAN.md), l'authentification est vérifiée
-# par la Lambda elle-même via jwt.verify(token, JWT_SECRET).
-# L'authorizer API Gateway est donc "NONE" sur toutes les routes.
-# =============================================================================
-USER_POOL_ID=""
-APP_CLIENT_ID=""
-if aws cognito-idp list-user-pools --max-results 10 --region "$REGION" >/dev/null 2>&1; then
-    USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 10 --region "$REGION" 2>/dev/null | jq -r '.UserPools[] | select(.Name == "HealthTrack-UserPool") | .Id // empty')
-fi
-
-if [ -n "$USER_POOL_ID" ]; then
-    APP_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id "$USER_POOL_ID" --max-results 10 --region "$REGION" 2>/dev/null | jq -r '.UserPoolClients[] | select(.ClientName == "HealthTrack-AppClient") | .ClientId // empty')
-    echo "📋 Cognito détecté : UserPool=$USER_POOL_ID, AppClient=$APP_CLIENT_ID"
-else
-    echo "ℹ️  Cognito non disponible (compte student ?) → mode JWT maison (vérification dans la Lambda)"
-fi
-echo ""
-
-# =============================================================================
-# Fonction pour créer une API Gateway (auth NONE — la Lambda vérifie le JWT)
-# =============================================================================
-create_api_gateway() {
-    local api_name=$1
-    local lambda_arn=$2
-    local api_description=$3
-    
-    echo "  Création de l'API Gateway : $api_name..."
-    
-    # Créer l'API
-    API_ID=$(aws apigateway create-rest-api \
+  if [[ -z "$api_id" || "$api_id" == "None" ]]; then
+    api_id="$(aws apigatewayv2 create-api \
       --name "$api_name" \
-      --description "$api_description" \
-      --region "$REGION" | \
-      jq -r '.id')
-    
-    echo "  ✅ API créée : $API_ID"
-    
-    # Donner les permissions à API Gateway pour invoquer la Lambda
+      --protocol-type HTTP \
+      --cors-configuration 'AllowOrigins=["*"],AllowMethods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],AllowHeaders=["authorization","content-type"]' \
+      --region "$REGION" \
+      --query ApiId \
+      --output text)"
+    echo "Created HTTP API $api_name ($api_id)"
+  else
+    aws apigatewayv2 update-api \
+      --api-id "$api_id" \
+      --cors-configuration 'AllowOrigins=["*"],AllowMethods=["GET","POST","PUT","PATCH","DELETE","OPTIONS"],AllowHeaders=["authorization","content-type"]' \
+      --region "$REGION" >/dev/null
+    echo "Updating HTTP API $api_name ($api_id)"
+  fi
+
+  integration_id="$(aws apigatewayv2 get-integrations \
+    --api-id "$api_id" \
+    --region "$REGION" \
+    --query 'Items[0].IntegrationId' \
+    --output text)"
+
+  if [[ -z "$integration_id" || "$integration_id" == "None" ]]; then
+    integration_id="$(aws apigatewayv2 create-integration \
+      --api-id "$api_id" \
+      --integration-type AWS_PROXY \
+      --integration-uri "$lambda_arn" \
+      --integration-method POST \
+      --payload-format-version 2.0 \
+      --timeout-in-millis 30000 \
+      --region "$REGION" \
+      --query IntegrationId \
+      --output text)"
+  else
+    aws apigatewayv2 update-integration \
+      --api-id "$api_id" \
+      --integration-id "$integration_id" \
+      --integration-type AWS_PROXY \
+      --integration-uri "$lambda_arn" \
+      --integration-method POST \
+      --payload-format-version 2.0 \
+      --timeout-in-millis 30000 \
+      --region "$REGION" >/dev/null
+  fi
+
+  route_id="$(aws apigatewayv2 get-routes \
+    --api-id "$api_id" \
+    --region "$REGION" \
+    --query "Items[?RouteKey=='\$default'].RouteId | [0]" \
+    --output text)"
+
+  if [[ -z "$route_id" || "$route_id" == "None" ]]; then
+    aws apigatewayv2 create-route \
+      --api-id "$api_id" \
+      --route-key '$default' \
+      --target "integrations/$integration_id" \
+      --region "$REGION" >/dev/null
+  else
+    aws apigatewayv2 update-route \
+      --api-id "$api_id" \
+      --route-id "$route_id" \
+      --route-key '$default' \
+      --target "integrations/$integration_id" \
+      --region "$REGION" >/dev/null
+  fi
+
+  stage_name="$(aws apigatewayv2 get-stages \
+    --api-id "$api_id" \
+    --region "$REGION" \
+    --query "Items[?StageName=='\$default'].StageName | [0]" \
+    --output text)"
+
+  if [[ -z "$stage_name" || "$stage_name" == "None" ]]; then
+    aws apigatewayv2 create-stage \
+      --api-id "$api_id" \
+      --stage-name '$default' \
+      --auto-deploy \
+      --region "$REGION" >/dev/null
+  else
+    aws apigatewayv2 update-stage \
+      --api-id "$api_id" \
+      --stage-name '$default' \
+      --auto-deploy \
+      --region "$REGION" >/dev/null
+  fi
+
+  statement_id="apigateway-$api_id"
+  current_policy="$(aws lambda get-policy \
+    --function-name "$function_name" \
+    --region "$REGION" \
+    --query Policy \
+    --output text 2>/dev/null || true)"
+
+  if [[ -z "$current_policy" ]] || ! jq -e --arg sid "$statement_id" \
+    '.Statement[]? | select(.Sid == $sid)' >/dev/null <<<"$current_policy"; then
     aws lambda add-permission \
-      --function-name "$lambda_arn" \
-      --statement-id "apigateway-invoke-$api_name" \
-      --action "lambda:InvokeFunction" \
-      --principal "apigateway.amazonaws.com" \
-      --source-arn "arn:aws:execute-api:$REGION:$ACCOUNT_ID:$API_ID/*/*" \
-      --region "$REGION"
-    
-    echo "  ✅ Permission Lambda ajoutée"
-    
-    # Créer la ressource racine
-    ROOT_RESOURCE_ID=$(aws apigateway get-resources --rest-api-id "$API_ID" --region "$REGION" | jq -r '.items[] | select(.path == "/") | .id')
-    
-    # Créer la ressource proxy {proxy+} pour toutes les sous-routes
-    PROXY_RESOURCE_ID=$(aws apigateway create-resource \
-      --rest-api-id "$API_ID" \
-      --parent-id "$ROOT_RESOURCE_ID" \
-      --path-part "{proxy+}" \
-      --region "$REGION" | \
-      jq -r '.id')
-    
-    # Méthode ANY sur le proxy — auth NONE (la Lambda vérifie le JWT elle-même)
-    aws apigateway put-method \
-      --rest-api-id "$API_ID" \
-      --resource-id "$PROXY_RESOURCE_ID" \
-      --http-method "ANY" \
-      --authorization-type "NONE" \
-      --region "$REGION"
-    
-    # Intégration Lambda proxy
-    aws apigateway put-integration \
-      --rest-api-id "$API_ID" \
-      --resource-id "$PROXY_RESOURCE_ID" \
-      --http-method "ANY" \
-      --type "AWS_PROXY" \
-      --integration-http-method "POST" \
-      --uri "arn:aws:apigateway:$REGION:lambda:path/2015-03-31/functions/$lambda_arn/invocations" \
-      --region "$REGION"
-    
-    # Méthode ANY sur la racine (pour /, /health, etc.)
-    aws apigateway put-method \
-      --rest-api-id "$API_ID" \
-      --resource-id "$ROOT_RESOURCE_ID" \
-      --http-method "ANY" \
-      --authorization-type "NONE" \
-      --region "$REGION"
-    
-    aws apigateway put-integration \
-      --rest-api-id "$API_ID" \
-      --resource-id "$ROOT_RESOURCE_ID" \
-      --http-method "ANY" \
-      --type "AWS_PROXY" \
-      --integration-http-method "POST" \
-      --uri "arn:aws:apigateway:$REGION:lambda:path/2015-03-31/functions/$lambda_arn/invocations" \
-      --region "$REGION"
-    
-    # CORS sur le proxy
-    aws apigateway put-method-response \
-      --rest-api-id "$API_ID" --resource-id "$PROXY_RESOURCE_ID" --http-method "ANY" \
-      --status-code "200" \
-      --response-parameters "method.response.header.Access-Control-Allow-Origin=false" \
-      --region "$REGION" 2>/dev/null || true
-    aws apigateway put-integration-response \
-      --rest-api-id "$API_ID" --resource-id "$PROXY_RESOURCE_ID" --http-method "ANY" \
-      --status-code "200" \
-      --response-parameters "method.response.header.Access-Control-Allow-Origin='*'" \
-      --region "$REGION" 2>/dev/null || true
-    
-    # Déployer l'API en stage 'prod'
-    aws apigateway create-deployment \
-      --rest-api-id "$API_ID" \
-      --stage-name "prod" \
-      --region "$REGION" > /dev/null
-    
-    API_URL="https://$API_ID.execute-api.$REGION.amazonaws.com/prod"
-    echo "  ✅ API déployée : $API_URL"
-    
-    echo "$API_ID|$API_URL" 
+      --function-name "$function_name" \
+      --statement-id "$statement_id" \
+      --action lambda:InvokeFunction \
+      --principal apigateway.amazonaws.com \
+      --source-arn "arn:aws:execute-api:$REGION:$ACCOUNT_ID:$api_id/*" \
+      --region "$REGION" >/dev/null
+  fi
+
+  api_url="$(aws apigatewayv2 get-api \
+    --api-id "$api_id" \
+    --region "$REGION" \
+    --query ApiEndpoint \
+    --output text)"
+  printf '%s=%s\n' "$3" "$api_url" >> "$ENV_FILE"
+  echo "$api_name: $api_url"
 }
 
-# =============================================================================
-# Créer les 4 API Gateways
-# =============================================================================
+for command in aws jq; do
+  if ! command -v "$command" >/dev/null 2>&1; then
+    echo "Missing required command: $command" >&2
+    exit 1
+  fi
+done
 
-# 1. API Utilisateurs
-echo "📋 [1/4] Création API Gateway Utilisateurs..."
-UTILISATEURS_API_INFO=$(create_api_gateway "healthtrack-api-utilisateurs" "$UTILISATEURS_LAMBDA_ARN" "API pour la gestion des utilisateurs (inscription, connexion, profils)")
-UTILISATEURS_API_ID=$(echo "$UTILISATEURS_API_INFO" | cut -d'|' -f1)
-UTILISATEURS_API_URL=$(echo "$UTILISATEURS_API_INFO" | cut -d'|' -f2)
-echo ""
+deploy_api healthtrack-api-utilisateurs healthtrack-api-utilisateurs UTILISATEURS_API_URL
+deploy_api healthtrack-api-rdv healthtrack-api-rdv RDV_API_URL
+deploy_api healthtrack-api-dossiers healthtrack-api-dossiers DOSSIERS_API_URL
+deploy_api healthtrack-api-ordonnances healthtrack-api-ordonnances ORDONNANCES_API_URL
 
-# 2. API RDV/Disponibilités
-echo "📋 [2/4] Création API Gateway RDV..."
-RDV_API_INFO=$(create_api_gateway "healthtrack-api-rdv" "$RDV_LAMBDA_ARN" "API pour les disponibilités, rendez-vous et comptes rendus")
-RDV_API_ID=$(echo "$RDV_API_INFO" | cut -d'|' -f1)
-RDV_API_URL=$(echo "$RDV_API_INFO" | cut -d'|' -f2)
-echo ""
-
-# 3. API Dossiers Médicaux
-echo "📋 [3/4] Création API Gateway Dossiers..."
-DOSSIERS_API_INFO=$(create_api_gateway "healthtrack-api-dossiers" "$DOSSIERS_LAMBDA_ARN" "API pour la gestion des dossiers médicaux (antécédents, allergies, vaccinations)")
-DOSSIERS_API_ID=$(echo "$DOSSIERS_API_INFO" | cut -d'|' -f1)
-DOSSIERS_API_URL=$(echo "$DOSSIERS_API_INFO" | cut -d'|' -f2)
-echo ""
-
-# 4. API Ordonnances
-echo "📋 [4/4] Création API Gateway Ordonnances..."
-ORDONNANCES_API_INFO=$(create_api_gateway "healthtrack-api-ordonnances" "$ORDONNANCES_LAMBDA_ARN" "API pour la gestion des ordonnances et médicaments")
-ORDONNANCES_API_ID=$(echo "$ORDONNANCES_API_INFO" | cut -d'|' -f1)
-ORDONNANCES_API_URL=$(echo "$ORDONNANCES_API_INFO" | cut -d'|' -f2)
-echo ""
-
-# =============================================================================
-# Sauvegarder les URLs dans un fichier
-# =============================================================================
-echo "📋 Sauvegarde des URLs..."
-cat > ../.env.apigateway << EOF
-# API Gateway URLs
-UTILISATEURS_API_URL=$UTILISATEURS_API_URL
-RDV_API_URL=$RDV_API_URL
-DOSSIERS_API_URL=$DOSSIERS_API_URL
-ORDONNANCES_API_URL=$ORDONNANCES_API_URL
-
-# API Gateway IDs
-UTILISATEURS_API_ID=$UTILISATEURS_API_ID
-RDV_API_ID=$RDV_API_ID
-DOSSIERS_API_ID=$DOSSIERS_API_ID
-ORDONNANCES_API_ID=$ORDONNANCES_API_ID
-
-# Cognito (optionnel — vide si non disponible)
-COGNITO_USER_POOL_ID=${USER_POOL_ID:-}
-COGNITO_APP_CLIENT_ID=${APP_CLIENT_ID:-}
-
-# Mode d'authentification : "jwt" (maison, par défaut) ou "cognito"
-AUTH_MODE=$([ -n "$USER_POOL_ID" ] && echo "cognito" || echo "jwt")
-EOF
-
-if ! grep -q "^\.env\.apigateway$" ../.gitignore; then
-    echo ".env.apigateway" >> ../.gitignore
-fi
-
-echo "✅ URLs sauvegardées dans ../.env.apigateway"
-
-# =============================================================================
-echo ""
-echo "✅ Toutes les API Gateways ont été déployées !"
-echo ""
-echo "📋 Résumé :"
-echo "   Utilisateurs : $UTILISATEURS_API_URL"
-echo "   RDV : $RDV_API_URL"
-echo "   Dossiers : $DOSSIERS_API_URL"
-echo "   Ordonnances : $ORDONNANCES_API_URL"
-echo ""
-echo "⚠️  Prochaine étape : Déployer le frontend avec ./deploy-frontend.sh"
+echo "API Gateway URLs saved to $ENV_FILE"

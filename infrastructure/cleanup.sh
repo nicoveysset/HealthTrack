@@ -9,7 +9,7 @@
 
 set -e
 
-REGION="eu-west-1"
+REGION="${AWS_REGION:-eu-west-1}"
 
 echo "🧹 [Cleanup] Suppression des ressources AWS..."
 echo ""
@@ -103,6 +103,21 @@ for API_ID in $APIS; do
       --region "$REGION"
     
     echo "  ✅ API Gateway supprimée : $API_ID"
+done
+
+echo ""
+
+# =============================================================================
+# Supprimer les HTTP APIs (API Gateway v2)
+# =============================================================================
+echo "🌐 Suppression des HTTP APIs..."
+
+HTTP_APIS=$(aws apigatewayv2 get-apis --region "$REGION" | jq -r '.Items[]? | select(.Name | startswith("healthtrack")) | .ApiId')
+
+for API_ID in $HTTP_APIS; do
+    echo "  Suppression de l'HTTP API : $API_ID..."
+    aws apigatewayv2 delete-api --api-id "$API_ID" --region "$REGION"
+    echo "  ✅ HTTP API supprimée : $API_ID"
 done
 
 echo ""

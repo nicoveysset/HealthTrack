@@ -20,9 +20,13 @@ public class OrdonnanceService {
     private final OrdonnanceRepository ordonnanceRepo;
     private final LignePrescriptionRepository ligneRepo;
     private final MedicamentRepository medicamentRepo;
+    private final CompteRenduRepository compteRenduRepo;
+    private final AllergieRepository allergieRepo;
 
-    public OrdonnanceService(OrdonnanceRepository o, LignePrescriptionRepository l, MedicamentRepository m) {
+    public OrdonnanceService(OrdonnanceRepository o, LignePrescriptionRepository l, MedicamentRepository m,
+                             CompteRenduRepository compteRenduRepo, AllergieRepository allergieRepo) {
         this.ordonnanceRepo = o; this.ligneRepo = l; this.medicamentRepo = m;
+        this.compteRenduRepo = compteRenduRepo; this.allergieRepo = allergieRepo;
     }
 
     private Ordonnance checkExpiration(Ordonnance o) {
@@ -36,13 +40,21 @@ public class OrdonnanceService {
         return o;
     }
 
-    public Ordonnance createOrdonnance(String compteRenduId, String praticienId, String patientId) {
+    public Ordonnance createOrdonnance(String compteRenduId, String praticienId, String userType) {
+        if (!"PRATICIEN".equals(userType))
+            throw new ApiException("ForbiddenException", "Seul un praticien peut créer une ordonnance", 403);
+        CompteRenduRepository.CompteRenduReference compteRendu = compteRenduRepo.findById(compteRenduId)
+            .filter(cr -> cr.getDateFinalisation() != null && !cr.getDateFinalisation().isBlank())
+            .orElseThrow(() -> new ApiException("ConsultationNotFinalizedException", "Compte rendu finalisé non trouvé", 409));
+        if (!praticienId.equals(compteRendu.getPraticienId()))
+            throw new ApiException("ForbiddenException", "Seul le praticien du compte rendu peut créer l'ordonnance", 403);
         if (ordonnanceRepo.existsByCompteRenduId(compteRenduId))
-            throw new ApiException("ConsultationNotFinalizedException", "Une ordonnance existe déjà pour ce compte rendu", 409);
+            throw new ApiException("Conflict", "Une ordonnance existe déjà pour ce compte rendu", 409);
         String now = Instant.now().toString();
         Ordonnance o = new Ordonnance();
         o.setOrdonnanceId(UUID.randomUUID().toString());
-        o.setCompteRenduId(compteRenduId); o.setPatientId(patientId); o.setPraticienId(praticienId);
+        o.setCompteRenduId(compteRenduId); o.setRdvId(compteRendu.getRdvId());
+        o.setPatientId(compteRendu.getPatientId()); o.setPraticienId(praticienId);
         o.setDateEmission(now);
         o.setDateValidite(LocalDateTime.now(ZoneOffset.UTC).plusMonths(3).toString());
         o.setStatut("ACTIVE"); o.setCreatedAt(now); o.setUpdatedAt(now);
@@ -73,7 +85,10 @@ public class OrdonnanceService {
         o = checkExpiration(o);
         if ("EXPIREE".equals(o.getStatut())) throw new ApiException("PrescriptionExpiredException", "L'ordonnance est expirée", 409);
         if (!o.getPraticienId().equals(userId)) throw new ApiException("Forbidden", "Seul le praticien peut ajouter des lignes", 403);
-        if (!medicamentRepo.existsById(req.medicamentId())) throw new ApiException("NotFound", "Médicament non trouvé", 404);
+        Medicament medicament = medicamentRepo.findById(req.medicamentId())
+            .orElseThrow(() -> new ApiException("NotFound", "Médicament non trouvé", 404));
+        if (allergieRepo.conflictsWith(o.getPatientId(), medicament.getNom(), medicament.getSubstanceActive()))
+            throw new ApiException("AllergyConflictException", "Conflit avec une allergie du patient", 409);
         String now = Instant.now().toString();
         LignePrescription l = new LignePrescription();
         l.setLigneId(UUID.randomUUID().toString()); l.setOrdonnanceId(ordonnanceId);

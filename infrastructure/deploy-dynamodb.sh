@@ -9,7 +9,16 @@
 
 set -e
 
-REGION="eu-west-1"
+REGION="${AWS_REGION:-eu-west-1}"
+
+create_table() {
+  local table_name="$2"
+  if aws dynamodb describe-table --table-name "$table_name" --region "$REGION" >/dev/null 2>&1; then
+    echo "Table $table_name already exists; leaving its schema unchanged."
+    return
+  fi
+  aws dynamodb create-table "$@"
+}
 
 echo "💾 [DynamoDB] Création des 12 tables..."
 echo ""
@@ -18,7 +27,7 @@ echo ""
 # 1. Table Utilisateurs
 # =============================================================================
 echo "📋 [1/12] Création de la table Utilisateurs..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-utilisateurs \
   --attribute-definitions \
     AttributeName=userId,AttributeType=S \
@@ -32,8 +41,7 @@ aws dynamodb create-table \
       {
         "IndexName": "byEmail",
         "KeySchema": [{"AttributeName": "email", "KeyType": "HASH"}],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byMedecinTraitant",
@@ -41,8 +49,7 @@ aws dynamodb create-table \
           {"AttributeName": "medecinTraitantId", "KeyType": "HASH"},
           {"AttributeName": "type", "KeyType": "RANGE"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \
@@ -56,7 +63,7 @@ echo "✅ Table healthtrack-utilisateurs créée"
 # 2. Table DossiersMedicaux
 # =============================================================================
 echo "📋 [2/12] Création de la table DossiersMedicaux..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-dossiers-medicaux \
   --attribute-definitions \
     AttributeName=patientId,AttributeType=S \
@@ -72,7 +79,7 @@ echo "✅ Table healthtrack-dossiers-medicaux créée"
 # 3. Table Antecedents
 # =============================================================================
 echo "📋 [3/12] Création de la table Antecedents..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-antecedents \
   --attribute-definitions \
     AttributeName=antecedentId,AttributeType=S \
@@ -86,8 +93,7 @@ aws dynamodb create-table \
       {
         "IndexName": "byDossier",
         "KeySchema": [{"AttributeName": "dossierId", "KeyType": "HASH"}],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byDossierAndType",
@@ -95,16 +101,14 @@ aws dynamodb create-table \
           {"AttributeName": "dossierId", "KeyType": "HASH"},
           {"AttributeName": "type", "KeyType": "RANGE"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byStatut",
         "KeySchema": [
           {"AttributeName": "statut", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \
@@ -117,7 +121,7 @@ echo "✅ Table healthtrack-antecedents créée"
 # 4. Table Allergies
 # =============================================================================
 echo "📋 [4/12] Création de la table Allergies..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-allergies \
   --attribute-definitions \
     AttributeName=allergieId,AttributeType=S \
@@ -131,8 +135,7 @@ aws dynamodb create-table \
         "KeySchema": [
           {"AttributeName": "patientId", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \
@@ -145,7 +148,7 @@ echo "✅ Table healthtrack-allergies créée"
 # 5. Table Vaccinations
 # =============================================================================
 echo "📋 [5/12] Création de la table Vaccinations..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-vaccinations \
   --attribute-definitions \
     AttributeName=vaccinationId,AttributeType=S \
@@ -158,8 +161,7 @@ aws dynamodb create-table \
       {
         "IndexName": "byDossier",
         "KeySchema": [{"AttributeName": "dossierId", "KeyType": "HASH"}],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byDossierAndNom",
@@ -167,8 +169,7 @@ aws dynamodb create-table \
           {"AttributeName": "dossierId", "KeyType": "HASH"},
           {"AttributeName": "nomVaccin", "KeyType": "RANGE"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \
@@ -181,7 +182,7 @@ echo "✅ Table healthtrack-vaccinations créée"
 # 6. Table Disponibilites
 # =============================================================================
 echo "📋 [6/12] Création de la table Disponibilites..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-disponibilites \
   --attribute-definitions \
     AttributeName=dispoId,AttributeType=S \
@@ -196,8 +197,7 @@ aws dynamodb create-table \
         "KeySchema": [
           {"AttributeName": "praticienId", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byPraticienAndJour",
@@ -205,8 +205,7 @@ aws dynamodb create-table \
           {"AttributeName": "praticienId", "KeyType": "HASH"},
           {"AttributeName": "jourSemaine", "KeyType": "RANGE"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \
@@ -219,7 +218,7 @@ echo "✅ Table healthtrack-disponibilites créée"
 # 7. Table Indisponibilites
 # =============================================================================
 echo "📋 [7/12] Création de la table Indisponibilites..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-indisponibilites \
   --attribute-definitions \
     AttributeName=indispoId,AttributeType=S \
@@ -235,8 +234,7 @@ aws dynamodb create-table \
         "KeySchema": [
           {"AttributeName": "praticienId", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byPraticienAndDate",
@@ -244,8 +242,7 @@ aws dynamodb create-table \
           {"AttributeName": "praticienId", "KeyType": "HASH"},
           {"AttributeName": "dateDebut", "KeyType": "RANGE"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \
@@ -258,7 +255,7 @@ echo "✅ Table healthtrack-indisponibilites créée"
 # 8. Table RendezVous
 # =============================================================================
 echo "📋 [8/12] Création de la table RendezVous..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-rendezvous \
   --attribute-definitions \
     AttributeName=rdvId,AttributeType=S \
@@ -276,8 +273,7 @@ aws dynamodb create-table \
           {"AttributeName": "praticienId", "KeyType": "HASH"},
           {"AttributeName": "date", "KeyType": "RANGE"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byPatientAndDate",
@@ -285,16 +281,14 @@ aws dynamodb create-table \
           {"AttributeName": "patientId", "KeyType": "HASH"},
           {"AttributeName": "date", "KeyType": "RANGE"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byStatut",
         "KeySchema": [
           {"AttributeName": "statut", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \
@@ -307,7 +301,7 @@ echo "✅ Table healthtrack-rendezvous créée"
 # 9. Table ComptesRendus
 # =============================================================================
 echo "📋 [9/12] Création de la table ComptesRendus..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-comptes-rendus \
   --attribute-definitions \
     AttributeName=compteRenduId,AttributeType=S \
@@ -323,24 +317,21 @@ aws dynamodb create-table \
         "KeySchema": [
           {"AttributeName": "rdvId", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byPraticien",
         "KeySchema": [
           {"AttributeName": "praticienId", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byPatient",
         "KeySchema": [
           {"AttributeName": "patientId", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \
@@ -353,14 +344,14 @@ echo "✅ Table healthtrack-comptes-rendus créée"
 # 10. Table Ordonnances
 # =============================================================================
 echo "📋 [10/12] Création de la table Ordonnances..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-ordonnances \
   --attribute-definitions \
     AttributeName=ordonnanceId,AttributeType=S \
     AttributeName=compteRenduId,AttributeType=S \
     AttributeName=patientId,AttributeType=S \
     AttributeName=dateEmission,AttributeType=S \
-    AttributeName=dateValidite,AttributeType=S \
+    AttributeName=rdvId,AttributeType=S \
     AttributeName=statut,AttributeType=S \
   --key-schema \
     AttributeName=ordonnanceId,KeyType=HASH \
@@ -371,8 +362,7 @@ aws dynamodb create-table \
         "KeySchema": [
           {"AttributeName": "compteRenduId", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byPatientAndDate",
@@ -380,24 +370,21 @@ aws dynamodb create-table \
           {"AttributeName": "patientId", "KeyType": "HASH"},
           {"AttributeName": "dateEmission", "KeyType": "RANGE"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byRendezVous",
         "KeySchema": [
           {"AttributeName": "rdvId", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "byStatut",
         "KeySchema": [
           {"AttributeName": "statut", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \
@@ -410,7 +397,7 @@ echo "✅ Table healthtrack-ordonnances créée"
 # 11. Table LignesPrescription
 # =============================================================================
 echo "📋 [11/12] Création de la table LignesPrescription..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-lignes-prescription \
   --attribute-definitions \
     AttributeName=ordonnanceId,AttributeType=S \
@@ -428,7 +415,7 @@ echo "✅ Table healthtrack-lignes-prescription créée"
 # 12. Table Medicaments
 # =============================================================================
 echo "📋 [12/12] Création de la table Medicaments..."
-aws dynamodb create-table \
+create_table \
   --table-name healthtrack-medicaments \
   --attribute-definitions \
     AttributeName=medicamentId,AttributeType=S \
@@ -443,16 +430,14 @@ aws dynamodb create-table \
         "KeySchema": [
           {"AttributeName": "forme", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       },
       {
         "IndexName": "bySubstanceActive",
         "KeySchema": [
           {"AttributeName": "substanceActive", "KeyType": "HASH"}
         ],
-        "Projection": {"ProjectionType": "ALL"},
-        "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5}
+        "Projection": {"ProjectionType": "ALL"}
       }
     ]' \
   --billing-mode PAY_PER_REQUEST \

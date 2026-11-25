@@ -32,7 +32,7 @@ public class OrdonnanceController {
 
     @PostMapping("/ordonnances")
     public ResponseEntity<Ordonnance> create(@Valid @RequestBody OrdonnanceRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.createOrdonnance(req.compteRenduId(), uid(), uid()));
+        return ResponseEntity.status(HttpStatus.CREATED).body(service.createOrdonnance(req.compteRenduId(), uid(), utype()));
     }
     @GetMapping("/ordonnances/{id}")
     public OrdonnanceAvecLignes get(@PathVariable String id) { return service.getOrdonnance(id, uid()); }

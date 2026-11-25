@@ -319,6 +319,7 @@ Les 12 tables suivantes doivent être créées avec les clés et GSIs exactement
 
 **API Ordonnances :**
 - `ValidationError` (400)
+- `ForbiddenException` (403)
 - `ConsultationNotFinalizedException` (409)
 - `AllergyConflictException` (409)
 - `PrescriptionExpiredException` (409)

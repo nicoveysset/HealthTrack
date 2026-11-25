@@ -23,34 +23,26 @@ API Gateway (HTTP API v2) ×4 ──► Lambda Spring Boot ──► DynamoDB (1
 ## Prérequis
 
 - Java 21+ (JDK complet), Maven 3.8+
-- AWS CLI configuré (`aws configure`) avec les droits Lambda, API Gateway, DynamoDB, IAM
+- Node.js 18+ et npm
+- AWS CLI configuré (`aws configure`) avec les droits Lambda, API Gateway v2, DynamoDB, IAM, S3 et CloudFront
+- Bash et `jq` (Linux, WSL ou Git Bash)
 
 ## Build
 
 ```bash
-mvn clean package -DskipTests
+mvn -B clean package -DskipTests
 ```
 
-Génère un fat JAR par module dans `api-*/target/*.jar`, prêt à être uploadé sur Lambda.
+Génère un JAR autonome `*-lambda.jar` par module, utilisé par les scripts de déploiement.
 
-## Déploiement AWS (par service)
+## Déploiement AWS
 
 ```bash
-# 1. Créer la Lambda (exemple pour api-utilisateurs)
-aws lambda create-function \
-  --function-name healthtrack-api-utilisateurs \
-  --runtime java21 \
-  --handler com.healthtrack.utilisateurs.LambdaHandler \
-  --role arn:aws:iam::<ACCOUNT>:role/healthtrack-lambda-role \
-  --jar fileb://api-utilisateurs/target/healthtrack-utilisateurs-1.0.0.jar \
-  --timeout 30 --memory-size 1024 \
-  --environment "Variables={JWT_SECRET=<secret>,AWS_REGION=eu-west-1}"
-
-# 2. Créer l'API Gateway HTTP API et l'intégrer à la Lambda
-# 3. Répéter pour les 3 autres services
+cd infrastructure
+./deploy-all.sh
 ```
 
-Les scripts dans `infrastructure/` (deploy-lambdas.sh, deploy-apigateway.sh, deploy-dynamodb.sh) peuvent être adaptés pour automatiser ces étapes.
+Le déploiement crée les tables DynamoDB, construit et déploie les quatre Lambdas Java 21, les relie à quatre API Gateway HTTP API v2 et publie le frontend sur S3/CloudFront. Les variables `.env.*` générées à la racine contiennent les URLs et le secret JWT ; ne pas les committer.
 
 ## Variables d'environnement (Lambda)
 
@@ -58,6 +50,8 @@ Les scripts dans `infrastructure/` (deploy-lambdas.sh, deploy-apigateway.sh, dep
 |----------|-------------|
 | `JWT_SECRET` | Clé secrète JWT (partagée entre les 4 Lambdas) |
 | `AWS_REGION` | Région AWS (défaut: eu-west-1) |
+
+Le déploiement crée un `JWT_SECRET` aléatoire s'il n'est pas défini et le conserve dans `.env.jwt_secret` pour que les quatre APIs utilisent le même secret.
 
 ## Développement local
 

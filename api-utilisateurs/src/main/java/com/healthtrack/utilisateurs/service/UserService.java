@@ -8,9 +8,11 @@ import com.healthtrack.utilisateurs.repository.UserRepository;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.text.Normalizer;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 
@@ -114,6 +116,13 @@ public class UserService {
             .orElseThrow(() -> new ApiException("NotFound", "Praticien non trouvé", 404));
         if (!"PRATICIEN".equals(medecin.getType()))
             throw new ApiException("NotFound", "Praticien non trouvé", 404);
+        String specialite = Normalizer.normalize(
+                medecin.getSpecialite() == null ? "" : medecin.getSpecialite(), Normalizer.Form.NFD)
+            .replaceAll("\\p{M}", "")
+            .trim()
+            .toLowerCase(Locale.ROOT);
+        if (!"medecine generale".equals(specialite))
+            throw new ApiException("InvalidSpecialityException", "Le médecin traitant doit être généraliste", 409);
         if (!"ACTIF".equals(medecin.getStatut()))
             throw new ApiException("PractitionerNotAvailableException", "Le praticien n'est pas disponible", 409);
         User updated = userRepository.update(patientId, Map.of("medecinTraitantId", medecinTraitantId));

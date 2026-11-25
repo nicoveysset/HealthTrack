@@ -21,16 +21,19 @@ public class RdvService {
     private final IndisponibiliteRepository indispoRepo;
     private final RendezVousRepository rdvRepo;
     private final CompteRenduRepository crRepo;
+    private final PraticienRepository praticienRepo;
 
     public RdvService(DisponibiliteRepository dispoRepo, IndisponibiliteRepository indispoRepo,
-                      RendezVousRepository rdvRepo, CompteRenduRepository crRepo) {
+                      RendezVousRepository rdvRepo, CompteRenduRepository crRepo,
+                      PraticienRepository praticienRepo) {
         this.dispoRepo = dispoRepo; this.indispoRepo = indispoRepo;
-        this.rdvRepo = rdvRepo; this.crRepo = crRepo;
+        this.rdvRepo = rdvRepo; this.crRepo = crRepo; this.praticienRepo = praticienRepo;
     }
 
     // ========== Disponibilités ==========
     public List<Disponibilite> replaceDisponibilites(String praticienId, List<DisponibilitesRequest.DispoItem> dispos) {
         for (var d : dispos) validateDispo(d);
+        validateNoOverlappingDisponibilites(dispos);
         dispoRepo.deleteByPraticienId(praticienId);
         List<Disponibilite> result = new ArrayList<>();
         String now = Instant.now().toString();
@@ -46,6 +49,22 @@ public class RdvService {
             result.add(dispoRepo.save(dispo));
         }
         return result;
+    }
+
+    private void validateNoOverlappingDisponibilites(List<DisponibilitesRequest.DispoItem> dispos) {
+        for (int i = 0; i < dispos.size(); i++) {
+            var current = dispos.get(i);
+            int currentStart = toMinutes(current.heureDebut());
+            int currentEnd = toMinutes(current.heureFin());
+            for (int j = i + 1; j < dispos.size(); j++) {
+                var other = dispos.get(j);
+                if (!current.jourSemaine().equals(other.jourSemaine())) continue;
+                int otherStart = toMinutes(other.heureDebut());
+                int otherEnd = toMinutes(other.heureFin());
+                if (currentStart < otherEnd && currentEnd > otherStart)
+                    throw new ApiException("SlotOverlapException", "Les disponibilités du même jour ne peuvent pas se chevaucher", 409);
+            }
+        }
     }
 
     private void validateDispo(DisponibilitesRequest.DispoItem d) {
@@ -102,7 +121,11 @@ public class RdvService {
         LocalDateTime rdvDateTime = LocalDateTime.parse(req.date() + "T" + req.heure());
         if (rdvDateTime.isBefore(LocalDateTime.now()))
             throw new ApiException("PastDateException", "La date du rendez-vous est dans le passé", 400);
-        if (!isCreneauDisponible(req.praticienId(), req.date(), req.heure(), duree))
+        requirePraticienActif(req.praticienId());
+        if (!isDansDisponibilites(req.praticienId(), req.date(), req.heure(), duree)
+            || overlapsIndisponibilite(req.praticienId(), req.date(), req.heure(), duree))
+            throw new ApiException("PractitionerUnavailableException", "Le praticien n'est pas disponible à ce créneau", 409);
+        if (overlapsRendezVous(req.praticienId(), req.date(), req.heure(), duree))
             throw new ApiException("SlotAlreadyTakenException", "Ce créneau n'est pas disponible", 409);
 
         String now = Instant.now().toString();
@@ -119,26 +142,52 @@ public class RdvService {
     }
 
     public boolean isCreneauDisponible(String praticienId, String date, String heure, int duree) {
+        return isDansDisponibilites(praticienId, date, heure, duree)
+            && !overlapsIndisponibilite(praticienId, date, heure, duree)
+            && !overlapsRendezVous(praticienId, date, heure, duree);
+    }
+
+    private void requirePraticienActif(String praticienId) {
+        PraticienReference praticien = praticienRepo.findById(praticienId)
+            .orElseThrow(() -> new ApiException("NotFound", "Praticien non trouvé", 404));
+        if (!"PRATICIEN".equals(praticien.getType()))
+            throw new ApiException("NotFound", "Praticien non trouvé", 404);
+        if (!"ACTIF".equals(praticien.getStatut()))
+            throw new ApiException("PractitionerUnavailableException", "Le praticien n'est pas disponible", 409);
+    }
+
+    private boolean isDansDisponibilites(String praticienId, String date, String heure, int duree) {
+        String jourSemaine = JOURS_COMPLET.get(LocalDate.parse(date).getDayOfWeek().getValue() % 7);
+        var dispos = dispoRepo.findByPraticienIdAndJour(praticienId, jourSemaine);
+        int debutMin = toMinutes(heure);
+        int finMin = debutMin + duree;
+        for (var d : dispos) {
+            int debutDispo = toMinutes(d.getHeureDebut());
+            int finDispo = toMinutes(d.getHeureFin());
+            if (debutMin >= debutDispo && finMin <= finDispo) return true;
+        }
+        return false;
+    }
+
+    private boolean overlapsIndisponibilite(String praticienId, String date, String heure, int duree) {
         LocalDateTime debut = LocalDateTime.parse(date + "T" + heure);
         LocalDateTime fin = debut.plusMinutes(duree);
         for (var indispo : indispoRepo.findByPraticienId(praticienId)) {
             LocalDateTime id = LocalDateTime.parse(indispo.getDateDebut());
             LocalDateTime ifin = LocalDateTime.parse(indispo.getDateFin());
-            if (debut.isBefore(ifin) && fin.isAfter(id)) return false;
+            if (debut.isBefore(ifin) && fin.isAfter(id)) return true;
         }
+        return false;
+    }
+
+    private boolean overlapsRendezVous(String praticienId, String date, String heure, int duree) {
+        LocalDateTime debut = LocalDateTime.parse(date + "T" + heure);
+        LocalDateTime fin = debut.plusMinutes(duree);
         for (var rdv : rdvRepo.findByPraticienIdAndDate(praticienId, date)) {
             if ("ANNULE".equals(rdv.getStatut()) || "NON_VENU".equals(rdv.getStatut())) continue;
             LocalDateTime rd = LocalDateTime.parse(rdv.getDate() + "T" + rdv.getHeure());
             LocalDateTime rf = rd.plusMinutes(rdv.getDuree() != null ? rdv.getDuree() : DUREE_DEFAULT);
-            if (debut.isBefore(rf) && fin.isAfter(rd)) return false;
-        }
-        String jourSemaine = JOURS_COMPLET.get(LocalDate.parse(date).getDayOfWeek().getValue() % 7);
-        var dispo = dispoRepo.findByPraticienIdAndJour(praticienId, jourSemaine);
-        int[] h = parseHeure(heure);
-        int debutMin = h[0]*60 + h[1], finMin = debutMin + duree;
-        for (var d : dispo) {
-            int[] dd = parseHeure(d.getHeureDebut()), df = parseHeure(d.getHeureFin());
-            if (debutMin >= dd[0]*60+dd[1] && finMin <= df[0]*60+df[1]) return true;
+            if (debut.isBefore(rf) && fin.isAfter(rd)) return true;
         }
         return false;
     }
@@ -258,5 +307,10 @@ public class RdvService {
     private int[] parseHeure(String h) {
         String[] p = h.split(":");
         return new int[]{Integer.parseInt(p[0]), Integer.parseInt(p[1])};
+    }
+
+    private int toMinutes(String heure) {
+        int[] parts = parseHeure(heure);
+        return parts[0] * 60 + parts[1];
     }
 }

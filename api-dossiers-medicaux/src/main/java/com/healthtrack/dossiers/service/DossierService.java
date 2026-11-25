@@ -19,14 +19,19 @@ public class DossierService {
     private final AntecedentRepository antecedentRepo;
     private final AllergieRepository allergieRepo;
     private final VaccinationRepository vaccinationRepo;
+    private final RendezVousAccessRepository rendezVousRepo;
+    private final PrescriptionLookupRepository prescriptionRepo;
 
-    public DossierService(DossierRepository d, AntecedentRepository a, AllergieRepository al, VaccinationRepository v) {
+    public DossierService(DossierRepository d, AntecedentRepository a, AllergieRepository al, VaccinationRepository v,
+                          RendezVousAccessRepository rendezVousRepo, PrescriptionLookupRepository prescriptionRepo) {
         this.dossierRepo = d; this.antecedentRepo = a; this.allergieRepo = al; this.vaccinationRepo = v;
+        this.rendezVousRepo = rendezVousRepo; this.prescriptionRepo = prescriptionRepo;
     }
 
     private void checkAccess(String patientId, String userId, String userType) {
-        if ("PATIENT".equals(userType) && !userId.equals(patientId))
-            throw new ApiException("AccessDeniedException", "Accès refusé", 403);
+        if ("PATIENT".equals(userType) && userId.equals(patientId)) return;
+        if ("PRATICIEN".equals(userType) && rendezVousRepo.hasCompletedAppointment(patientId, userId)) return;
+        throw new ApiException("AccessDeniedException", "Accès refusé", 403);
     }
 
     public DossierComplet getDossierComplet(String patientId, String userId, String userType) {
@@ -97,6 +102,8 @@ public class DossierService {
     public void deleteAllergie(String id, String userId, String userType) {
         Allergie a = allergieRepo.findById(id).orElseThrow(() -> new ApiException("NotFound", "Allergie non trouvée", 404));
         checkAccess(a.getPatientId(), userId, userType);
+        if (prescriptionRepo.isAllergyLinkedToActivePrescription(a.getPatientId(), a.getMedicamentConcerne()))
+            throw new ApiException("AllergyLinkedToActivePrescriptionException", "Cette allergie est liée à une ordonnance active", 409);
         allergieRepo.deleteById(id);
         log.info("{\"event\":\"ALLERGIE_DELETED\",\"allergieId\":\"{}\"}", id);
     }
