@@ -20,7 +20,9 @@ import OrdonnancePage from './pages/praticien/OrdonnancePage';
 
 // Pages Patient
 import PatientPriseRdvPage from './pages/patient/PriseRdvPage';
+import MesRendezVousPage from './pages/patient/MesRendezVousPage';
 import DossierMedicalPage from './pages/patient/DossierMedicalPage';
+import MesOrdonnancesPage from './pages/patient/MesOrdonnancesPage';
 
 // Pages communes
 import HomePage from './pages/HomePage';
@@ -83,10 +85,18 @@ function App() {
               </ProtectedRoute>
             } />
             
-            <Route path="/ordonnances/new" element={
+            <Route path="/rendezvous/:rdvId/ordonnance" element={
               <ProtectedRoute>
                 <PraticienRoute>
                   <OrdonnancePage />
+                </PraticienRoute>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/patients/:patientId/dossier" element={
+              <ProtectedRoute>
+                <PraticienRoute>
+                  <DossierMedicalPage />
                 </PraticienRoute>
               </ProtectedRoute>
             } />
@@ -100,14 +110,29 @@ function App() {
               </ProtectedRoute>
             } />
             
-            <Route path="/dossier-medical" element={
+            <Route path="/mes-rendezvous" element={
               <ProtectedRoute>
-                <DossierMedicalPage />
+                <PatientRoute>
+                  <MesRendezVousPage />
+                </PatientRoute>
               </ProtectedRoute>
             } />
-            
-            {/* Redirections */}
-            <Route path="/" element={<Navigate to="/" replace />} />
+
+            <Route path="/mes-ordonnances" element={
+              <ProtectedRoute>
+                <PatientRoute>
+                  <MesOrdonnancesPage />
+                </PatientRoute>
+              </ProtectedRoute>
+            } />
+
+            <Route path="/dossier-medical" element={
+              <ProtectedRoute>
+                <PatientRoute>
+                  <DossierMedicalPage />
+                </PatientRoute>
+              </ProtectedRoute>
+            } />
             
             {/* 404 */}
             <Route path="*" element={<NotFoundPage />} />

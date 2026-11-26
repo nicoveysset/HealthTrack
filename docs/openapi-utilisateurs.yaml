@@ -1,269 +1,265 @@
 openapi: 3.0.3
 info:
-  title: HealthTrack API - Utilisateurs
+  title: HealthTrack — API Utilisateurs
+  version: 2.0.0
   description: |
-    API de gestion des utilisateurs pour l'application HealthTrack.
-    
-    Cette API permet la gestion des utilisateurs (patients et praticiens), 
-    l'authentification, et la gestion des profils.
-  version: 1.0.0
-  contact:
-    name: HealthTrack Team
-    email: contact@healthtrack.com
-  license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    Inscription, connexion (JWT), profils, médecin traitant et recherche de praticiens.
+
+    **Authentification** : `POST /auth/login` (ou `/auth/register`) renvoie un `token` JWT signé (HS256)
+    contenant l'identifiant (`sub`), le `type` (PATIENT / PRATICIEN) et le nom. Cliquez sur **Authorize**
+    et collez ce token : il est accepté par les 4 APIs HealthTrack.
+
+    **Erreurs** : toutes les erreurs ont le même format `{ error, message, statusCode, path, timestamp }`,
+    où `error` est le nom de l'exception métier.
+
+    Comptes de démonstration (mot de passe `Demo1234!`) : `alice.dupont@example.com` (patient),
+    `dr.martin@healthtrack.fr` (généraliste), `dr.leroy@healthtrack.fr` (généraliste EN_CONGE).
 
 servers:
-  - url: https://api.healthtrack.com/utilisateurs
-    description: Production server
-  - url: https://staging-api.healthtrack.com/utilisateurs
-    description: Staging server
-  - url: http://localhost:3000/utilisateurs
-    description: Development server
+  - url: /
+    description: Même hôte que cette page (API Gateway sur AWS, localhost:8081 en local)
 
 tags:
-  - name: Authentication
-    description: Endpoints d'authentification
-  - name: Users
-    description: Gestion des utilisateurs
+  - name: Authentification
+  - name: Profil
+  - name: Patients
   - name: Praticiens
-    description: Gestion des praticiens
 
 security:
   - bearerAuth: []
 
 paths:
-  /register:
+  /auth/register:
     post:
-      tags:
-        - Authentication
-      summary: Inscription d'un nouvel utilisateur
-      description: Crée un nouveau compte utilisateur (patient ou praticien)
-      operationId: registerUser
+      tags: [Authentification]
+      summary: Inscription d'un patient ou d'un praticien
+      description: |
+        Les champs `specialite` et `rpps` sont obligatoires pour un praticien (créé au statut ACTIF),
+        `dateNaissance` et `nss` pour un patient. L'email est normalisé en minuscules.
+      security: []
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/UserRegistration'
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
             examples:
               patient:
-                summary: Inscription d'un patient
-                value:
-                  nom: "Jean Dupont"
-                  email: "jean.dupont@example.com"
-                  motDePasse: "SecurePassword123!"
-                  type: "PATIENT"
-                  telephone: "+33123456789"
-                  adresse: "123 Rue de la Santé, Paris"
-                  dateNaissance: "1980-01-15"
+                summary: Patient
+                value: { email: jeanne.petit@example.com, password: "Secret123!", type: PATIENT, firstName: Jeanne, lastName: Petit, dateNaissance: "1992-03-14", nss: "292037512345678" }
               praticien:
-                summary: Inscription d'un praticien
-                value:
-                  nom: "Dr. Martin"
-                  email: "dr.martin@example.com"
-                  motDePasse: "SecurePassword123!"
-                  type: "PRATICIEN"
-                  telephone: "+33123456789"
-                  specialite: "Médecine Générale"
-                  numeroRPS: "12345678901"
+                summary: Praticien
+                value: { email: dr.roux@healthtrack.fr, password: "Secret123!", type: PRATICIEN, firstName: Paul, lastName: Roux, specialite: GENERALISTE, rpps: "10101010101" }
       responses:
         '201':
-          description: Utilisateur créé avec succès
+          description: Compte créé, l'utilisateur est connecté
+          headers:
+            Location: { schema: { type: string }, description: "/utilisateurs/{userId}" }
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/UserPublic'
-              examples:
-                success:
-                  value:
-                    userId: "user-uuid-1234"
-                    nom: "Jean Dupont"
-                    email: "jean.dupont@example.com"
-                    type: "PATIENT"
-                    telephone: "+33123456789"
-                    statut: "ACTIF"
-                    dateInscription: "2023-11-25T10:00:00Z"
+              schema: { $ref: '#/components/schemas/AuthResponse' }
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: Champ manquant ou invalide (type, spécialité hors liste, date de naissance...)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "specialite invalide (valeurs possibles : [GENERALISTE, CARDIOLOGUE, DERMATOLOGUE, PEDIATRE, AUTRE])", statusCode: 400, path: /auth/register, timestamp: "2026-11-26T10:00:00Z" }
         '409':
-          $ref: '#/components/responses/Conflict'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+          description: Email déjà utilisé
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: EmailAlreadyUsedException, message: "Un utilisateur avec l'email alice.dupont@example.com existe déjà", statusCode: 409, path: /auth/register, timestamp: "2026-11-26T10:00:00Z" }
 
-  /login:
+  /auth/login:
     post:
-      tags:
-        - Authentication
-      summary: Connexion d'un utilisateur
-      description: Authentifie un utilisateur et retourne un token JWT
-      operationId: loginUser
+      tags: [Authentification]
+      summary: Connexion
+      security: []
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/UserCredentials'
-            examples:
-              valid:
-                value:
-                  email: "jean.dupont@example.com"
-                  motDePasse: "SecurePassword123!"
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            example: { email: alice.dupont@example.com, password: "Demo1234!" }
       responses:
         '200':
           description: Connexion réussie
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/LoginResponse'
-              examples:
-                success:
-                  value:
-                    token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    expiresIn: 3600
-                    user:
-                      userId: "user-uuid-1234"
-                      nom: "Jean Dupont"
-                      email: "jean.dupont@example.com"
-                      type: "PATIENT"
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
         '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          description: Compte désactivé
+          description: Email ou mot de passe incorrect
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              examples:
-                disabled:
-                  value:
-                    error: "AccountDisabledException"
-                    message: "Votre compte a été désactivé"
-                    statusCode: 403
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: InvalidCredentialsException, message: "Email ou mot de passe incorrect", statusCode: 401, path: /auth/login, timestamp: "2026-11-26T10:00:00Z" }
 
-  /users/me:
+  /utilisateurs/me:
     get:
-      tags:
-        - Users
-      summary: Obtenir le profil de l'utilisateur authentifié
-      description: Retourne les informations du profil de l'utilisateur actuellement authentifié
-      operationId: getUserProfile
+      tags: [Profil]
+      summary: Mon profil
       responses:
         '200':
-          description: Profil de l'utilisateur
+          description: Profil de l'utilisateur connecté
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/UserPublic'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
     patch:
-      tags:
-        - Users
-      summary: Mettre à jour le profil de l'utilisateur
-      description: Met à jour les informations du profil de l'utilisateur authentifié
-      operationId: updateUserProfile
+      tags: [Profil]
+      summary: Modifier mon profil
+      description: |
+        Modification partielle. Un patient peut modifier `firstName`, `lastName`, `dateNaissance`, `nss` ;
+        un praticien `firstName`, `lastName`, `specialite`, `rpps`.
+        Le statut d'un praticien se modifie via `PATCH /praticiens/me/statut`.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/UserUpdate'
-            examples:
-              update:
-                value:
-                  nom: "Jean Dupont (mis à jour)"
-                  telephone: "+33612345678"
-                  adresse: "456 Avenue de la Santé, Paris"
+            schema: { $ref: '#/components/schemas/UpdateProfileRequest' }
+            example: { firstName: Alice, lastName: Dupont-Martin }
       responses:
         '200':
           description: Profil mis à jour
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/UserPublic'
+              schema: { $ref: '#/components/schemas/User' }
         '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+          description: Champ non modifiable pour ce type de compte ou valeur invalide
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "Le statut se modifie via PATCH /praticiens/me/statut", statusCode: 400, path: /utilisateurs/me, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
-    delete:
-      tags:
-        - Users
-      summary: Supprimer le compte utilisateur
-      description: Supprime définitivement le compte de l'utilisateur authentifié
-      operationId: deleteUserAccount
+  /utilisateurs/{id}:
+    get:
+      tags: [Profil]
+      summary: Profil d'un utilisateur
+      description: Un praticien est visible par tous ; un patient n'est visible que par les praticiens (et par lui-même).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '204':
-          description: Compte supprimé avec succès
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+        '200':
+          description: Profil
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Un patient tente de consulter le profil d'un autre patient
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ForbiddenException, message: "Seul un praticien peut consulter le profil d'un patient", statusCode: 403, path: /utilisateurs/0b6e..., timestamp: "2026-11-26T10:00:00Z" }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /patients/me/medecin-traitant:
+    put:
+      tags: [Patients]
+      summary: Désigner ou modifier mon médecin traitant
+      description: |
+        Réservé aux patients. Le praticien désigné doit être **GENERALISTE** et ne pas être **INACTIF**
+        (un médecin EN_CONGE reste désignable).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MedecinTraitantRequest' }
+            example: { medecinTraitantId: "e9609385-19d9-4f11-8870-2be7c7ed9802" }
+      responses:
+        '200':
+          description: Médecin traitant enregistré (profil du patient renvoyé)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: L'utilisateur connecté n'est pas un patient
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ForbiddenException, message: "Seul un patient peut désigner son médecin traitant", statusCode: 403, path: /patients/me/medecin-traitant, timestamp: "2026-11-26T10:00:00Z" }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Le praticien est INACTIF
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: PractitionerNotAvailableException, message: "Le praticien est INACTIF et ne peut pas être désigné médecin traitant", statusCode: 409, path: /patients/me/medecin-traitant, timestamp: "2026-11-26T10:00:00Z" }
+        '422':
+          description: Le praticien n'est pas généraliste
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: InvalidSpecialityException, message: "Le médecin traitant doit être GENERALISTE (spécialité actuelle : CARDIOLOGUE)", statusCode: 422, path: /patients/me/medecin-traitant, timestamp: "2026-11-26T10:00:00Z" }
+
+  /praticiens/me/statut:
+    patch:
+      tags: [Praticiens]
+      summary: Passer en ACTIF, EN_CONGE ou INACTIF
+      description: Réservé aux praticiens. Un praticien EN_CONGE ou INACTIF ne peut plus recevoir de rendez-vous.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StatutRequest' }
+            example: { statut: EN_CONGE }
+      responses:
+        '200':
+          description: Statut mis à jour
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400':
+          description: Statut inconnu
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "statut invalide (valeurs possibles : [ACTIF, EN_CONGE, INACTIF])", statusCode: 400, path: /praticiens/me/statut, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: L'utilisateur connecté n'est pas un praticien
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ForbiddenException, message: "Seul un praticien peut modifier son statut", statusCode: 403, path: /praticiens/me/statut, timestamp: "2026-11-26T10:00:00Z" }
 
   /praticiens:
     get:
-      tags:
-        - Praticiens
-      summary: Lister tous les praticiens
-      description: Retourne la liste de tous les praticiens disponibles
-      operationId: listPraticiens
+      tags: [Praticiens]
+      summary: Rechercher des praticiens (paginé, filtrable)
       parameters:
-        - $ref: '#/components/parameters/page'
-        - $ref: '#/components/parameters/limit'
-        - name: specialite
-          in: query
-          description: Filtrer par spécialité
-          required: false
-          schema:
-            type: string
-            example: "Médecine Générale"
-        - name: search
-          in: query
-          description: Recherche par nom ou spécialité
-          required: false
-          schema:
-            type: string
-            example: "Martin"
+        - { name: specialite, in: query, schema: { $ref: '#/components/schemas/Specialite' } }
+        - { name: statut, in: query, schema: { $ref: '#/components/schemas/StatutPraticien' } }
+        - { $ref: '#/components/parameters/page' }
+        - { $ref: '#/components/parameters/limit' }
       responses:
         '200':
-          description: Liste des praticiens
+          description: Page de praticiens triés par nom
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/PraticienPublic'
-                  count:
-                    type: integer
-                    example: 10
-                  page:
-                    type: integer
-                    example: 1
-                  limit:
-                    type: integer
-                    example: 10
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/User' } }
+              example:
+                items:
+                  - { userId: "e9609385-19d9-4f11-8870-2be7c7ed9802", email: dr.martin@healthtrack.fr, type: PRATICIEN, name: Claire Martin, firstName: Claire, lastName: Martin, specialite: GENERALISTE, rpps: "10000000001", statut: ACTIF, createdAt: "2026-11-25T21:00:00Z", updatedAt: "2026-11-25T21:00:00Z" }
+                count: 3
+                page: 1
+                limit: 10
+        '400':
+          description: Filtre ou pagination invalide
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "limit doit être compris entre 1 et 100", statusCode: 400, path: /praticiens, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
 components:
   securitySchemes:
@@ -271,287 +267,127 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Token JWT pour l'authentification
-
-  schemas:
-    UserRegistration:
-      type: object
-      required:
-        - nom
-        - email
-        - motDePasse
-        - type
-      properties:
-        nom:
-          type: string
-          minLength: 2
-          maxLength: 100
-          example: "Jean Dupont"
-          description: Nom complet de l'utilisateur
-        email:
-          type: string
-          format: email
-          example: "jean.dupont@example.com"
-          description: Adresse email de l'utilisateur
-        motDePasse:
-          type: string
-          format: password
-          minLength: 8
-          example: "SecurePassword123!"
-          description: Mot de passe de l'utilisateur (minimum 8 caractères)
-        type:
-          type: string
-          enum: [PATIENT, PRATICIEN, ADMIN]
-          example: "PATIENT"
-          description: Type d'utilisateur
-        telephone:
-          type: string
-          pattern: '^\+[1-9]\d{1,14}$'
-          example: "+33123456789"
-          description: Numéro de téléphone avec indicatif pays
-        adresse:
-          type: string
-          maxLength: 200
-          example: "123 Rue de la Santé, Paris"
-          description: Adresse de l'utilisateur
-        dateNaissance:
-          type: string
-          format: date
-          example: "1980-01-15"
-          description: Date de naissance (pour les patients)
-        specialite:
-          type: string
-          maxLength: 100
-          example: "Médecine Générale"
-          description: Spécialité du praticien
-        numeroRPS:
-          type: string
-          pattern: '^\d{11}$'
-          example: "12345678901"
-          description: Numéro RPS du praticien (11 chiffres)
-
-    UserCredentials:
-      type: object
-      required:
-        - email
-        - motDePasse
-      properties:
-        email:
-          type: string
-          format: email
-          example: "jean.dupont@example.com"
-        motDePasse:
-          type: string
-          format: password
-          example: "SecurePassword123!"
-
-    UserPublic:
-      type: object
-      properties:
-        userId:
-          type: string
-          format: uuid
-          example: "user-uuid-1234"
-        nom:
-          type: string
-          example: "Jean Dupont"
-        email:
-          type: string
-          format: email
-          example: "jean.dupont@example.com"
-        type:
-          type: string
-          enum: [PATIENT, PRATICIEN, ADMIN]
-          example: "PATIENT"
-        telephone:
-          type: string
-          example: "+33123456789"
-        adresse:
-          type: string
-          example: "123 Rue de la Santé, Paris"
-        statut:
-          type: string
-          enum: [ACTIF, DESACTIVE, EN_ATTENTE]
-          example: "ACTIF"
-        dateInscription:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-        specialite:
-          type: string
-          example: "Médecine Générale"
-        dateNaissance:
-          type: string
-          format: date
-          example: "1980-01-15"
-
-    PraticienPublic:
-      type: object
-      properties:
-        userId:
-          type: string
-          format: uuid
-          example: "praticien-uuid-1234"
-        nom:
-          type: string
-          example: "Dr. Martin"
-        email:
-          type: string
-          format: email
-          example: "dr.martin@example.com"
-        telephone:
-          type: string
-          example: "+33123456789"
-        adresse:
-          type: string
-          example: "123 Rue de la Santé, Paris"
-        specialite:
-          type: string
-          example: "Médecine Générale"
-        statut:
-          type: string
-          enum: [ACTIF, DESACTIVE]
-          example: "ACTIF"
-
-    UserUpdate:
-      type: object
-      properties:
-        nom:
-          type: string
-          minLength: 2
-          maxLength: 100
-          example: "Jean Dupont (mis à jour)"
-        telephone:
-          type: string
-          pattern: '^\+[1-9]\d{1,14}$'
-          example: "+33612345678"
-        adresse:
-          type: string
-          maxLength: 200
-          example: "456 Avenue de la Santé, Paris"
-        motDePasse:
-          type: string
-          format: password
-          minLength: 8
-          example: "NewSecurePassword123!"
-
-    LoginResponse:
-      type: object
-      properties:
-        token:
-          type: string
-          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-        expiresIn:
-          type: integer
-          example: 3600
-          description: Durée de validité du token en secondes
-        user:
-          $ref: '#/components/schemas/UserPublic'
-
-    Error:
-      type: object
-      required:
-        - error
-        - message
-        - statusCode
-      properties:
-        error:
-          type: string
-          example: "NotFound"
-        message:
-          type: string
-          example: "Ressource non trouvée"
-        statusCode:
-          type: integer
-          example: 404
-
-  responses:
-    BadRequest:
-      description: Requête invalide
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            error: "ValidationError"
-            message: "Les données fournies sont invalides"
-            statusCode: 400
-
-    Unauthorized:
-      description: Non autorisé
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            error: "Unauthorized"
-            message: "Token d'authentification manquant ou invalide"
-            statusCode: 401
-
-    Forbidden:
-      description: Accès interdit
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            error: "Forbidden"
-            message: "Vous n'avez pas la permission d'accéder à cette ressource"
-            statusCode: 403
-
-    NotFound:
-      description: Ressource non trouvée
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            error: "NotFound"
-            message: "Ressource non trouvée"
-            statusCode: 404
-
-    Conflict:
-      description: Conflit
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            error: "EmailAlreadyExistsException"
-            message: "Un utilisateur avec cet email existe déjà"
-            statusCode: 409
-
-    InternalServerError:
-      description: Erreur interne du serveur
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-          example:
-            error: "InternalServerError"
-            message: "Une erreur interne est survenue"
-            statusCode: 500
 
   parameters:
     page:
       name: page
       in: query
-      description: Numéro de la page
-      required: false
-      schema:
-        type: integer
-        minimum: 1
-        default: 1
-        example: 1
-
+      schema: { type: integer, minimum: 1, default: 1 }
     limit:
       name: limit
       in: query
-      description: Nombre d'éléments par page
-      required: false
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 100
-        default: 10
-        example: 10
+      schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+
+  responses:
+    ValidationError:
+      description: Requête invalide
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: ValidationException, message: "email : must be a well-formed email address", statusCode: 400, path: /auth/login, timestamp: "2026-11-26T10:00:00Z" }
+    Unauthorized:
+      description: Token JWT manquant, expiré ou invalide
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: UnauthorizedException, message: "Token JWT manquant ou invalide", statusCode: 401, path: /utilisateurs/me, timestamp: "2026-11-26T10:00:00Z" }
+    NotFound:
+      description: Utilisateur ou praticien introuvable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: NotFoundException, message: "Praticien 1234 non trouvé", statusCode: 404, path: /patients/me/medecin-traitant, timestamp: "2026-11-26T10:00:00Z" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string, description: Nom de l'exception métier, example: EmailAlreadyUsedException }
+        message: { type: string }
+        statusCode: { type: integer }
+        path: { type: string }
+        timestamp: { type: string, format: date-time }
+    Page:
+      type: object
+      properties:
+        count: { type: integer, description: Nombre total d'éléments (toutes pages confondues) }
+        page: { type: integer }
+        limit: { type: integer }
+    Specialite:
+      type: string
+      enum: [GENERALISTE, CARDIOLOGUE, DERMATOLOGUE, PEDIATRE, AUTRE]
+    StatutPraticien:
+      type: string
+      enum: [ACTIF, EN_CONGE, INACTIF]
+    User:
+      type: object
+      properties:
+        userId: { type: string, format: uuid }
+        email: { type: string, format: email }
+        type: { type: string, enum: [PATIENT, PRATICIEN] }
+        name: { type: string }
+        firstName: { type: string }
+        lastName: { type: string }
+        specialite: { allOf: [{ $ref: '#/components/schemas/Specialite' }], nullable: true, description: Praticien uniquement }
+        rpps: { type: string, nullable: true, description: Praticien uniquement }
+        statut: { allOf: [{ $ref: '#/components/schemas/StatutPraticien' }], nullable: true, description: Praticien uniquement }
+        dateNaissance: { type: string, format: date, nullable: true, description: Patient uniquement }
+        nss: { type: string, nullable: true, description: Patient uniquement }
+        medecinTraitantId: { type: string, nullable: true, description: Patient uniquement }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      example:
+        userId: "ec64eced-b845-489e-9a26-db2bd4f84c40"
+        email: alice.dupont@example.com
+        type: PATIENT
+        name: Alice Dupont
+        firstName: Alice
+        lastName: Dupont
+        dateNaissance: "1990-04-12"
+        nss: "2900475012345"
+        medecinTraitantId: "e9609385-19d9-4f11-8870-2be7c7ed9802"
+        createdAt: "2026-11-25T21:00:00Z"
+        updatedAt: "2026-11-26T09:12:00Z"
+    AuthResponse:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        token: { type: string, description: JWT à envoyer dans l'en-tête Authorization, example: "eyJhbGciOiJIUzI1NiJ9..." }
+    RegisterRequest:
+      type: object
+      required: [email, password, type, firstName, lastName]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        type: { type: string, enum: [PATIENT, PRATICIEN] }
+        firstName: { type: string }
+        lastName: { type: string }
+        specialite: { $ref: '#/components/schemas/Specialite' }
+        rpps: { type: string }
+        dateNaissance: { type: string, format: date }
+        nss: { type: string }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    UpdateProfileRequest:
+      type: object
+      properties:
+        firstName: { type: string }
+        lastName: { type: string }
+        dateNaissance: { type: string, format: date }
+        nss: { type: string }
+        specialite: { $ref: '#/components/schemas/Specialite' }
+        rpps: { type: string }
+    MedecinTraitantRequest:
+      type: object
+      required: [medecinTraitantId]
+      properties:
+        medecinTraitantId: { type: string, format: uuid }
+    StatutRequest:
+      type: object
+      required: [statut]
+      properties:
+        statut: { $ref: '#/components/schemas/StatutPraticien' }

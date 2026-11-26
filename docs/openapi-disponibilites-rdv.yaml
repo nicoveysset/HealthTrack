@@ -1,1113 +1,663 @@
 openapi: 3.0.3
 info:
-  title: HealthTrack API - Disponibilités & Rendez-Vous
+  title: HealthTrack — API Disponibilités et Rendez-vous
+  version: 2.0.0
   description: |
-    API de gestion des disponibilités, indisponibilités et rendez-vous pour l'application HealthTrack.
-    
-    Cette API permet aux praticiens de gérer leurs créneaux de disponibilité,
-    aux patients de prendre des rendez-vous, et aux deux parties de gérer leurs rendez-vous.
-  version: 1.0.0
-  contact:
-    name: HealthTrack Team
-    email: contact@healthtrack.com
-  license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    Disponibilités hebdomadaires et indisponibilités ponctuelles des praticiens, calcul des créneaux libres,
+    prise et cycle de vie des rendez-vous, comptes rendus de consultation.
+
+    **Authentification** : token JWT obtenu sur l'API Utilisateurs (`POST /auth/login`), bouton **Authorize**.
+
+    **Heures** : toutes les dates/heures sont exprimées dans le fuseau du cabinet (**Europe/Paris**),
+    même si la Lambda s'exécute en UTC.
+
+    **Cycle de vie d'un rendez-vous**
+    ```
+    PLANIFIE ──► CONFIRME ──► EN_COURS ──► TERMINE
+       │            │
+       ├──► ANNULE ◄┤   (patient ou praticien, au plus tard 2h avant)
+       └──► NON_VENU◄┘  (praticien, après l'heure du rendez-vous)
+    ```
+    EN_COURS, TERMINE et NON_VENU sont réservés au praticien du rendez-vous.
 
 servers:
-  - url: https://api.healthtrack.com/disponibilites
-    description: Production server
-  - url: https://staging-api.healthtrack.com/disponibilites
-    description: Staging server
-  - url: http://localhost:3000/disponibilites
-    description: Development server
+  - url: /
+    description: Même hôte que cette page (API Gateway sur AWS, localhost:8082 en local)
 
 tags:
   - name: Disponibilités
-    description: Gestion des créneaux de disponibilité
   - name: Indisponibilités
-    description: Gestion des périodes d'indisponibilité
-  - name: Rendez-Vous
-    description: Gestion des rendez-vous
-  - name: Comptes Rendus
-    description: Gestion des comptes rendus de consultation
+  - name: Créneaux
+  - name: Rendez-vous
+  - name: Comptes rendus
 
 security:
   - bearerAuth: []
 
 paths:
-  /disponibilites:
-    post:
-      tags:
-        - Disponibilités
-      summary: Créer une nouvelle disponibilité
+  /praticiens/me/disponibilites:
+    put:
+      tags: [Disponibilités]
+      summary: Définir / modifier mes disponibilités hebdomadaires (praticien)
       description: |
-        Crée un nouveau créneau de disponibilité pour un praticien.
-        Seuls les praticiens peuvent créer des disponibilités.
-      operationId: createDisponibilite
+        Remplace l'ensemble des disponibilités récurrentes du praticien connecté.
+        Deux plages du même jour ne peuvent pas se chevaucher.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/DisponibiliteInput'
+            schema: { $ref: '#/components/schemas/DisponibilitesRequest' }
+            example:
+              disponibilites:
+                - { jourSemaine: LUNDI, heureDebut: "09:00", heureFin: "12:00" }
+                - { jourSemaine: LUNDI, heureDebut: "14:00", heureFin: "18:00" }
+                - { jourSemaine: MERCREDI, heureDebut: "09:00", heureFin: "12:00" }
+      responses:
+        '200':
+          description: Nouvelles disponibilités, triées par jour puis heure
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Disponibilite' } }
+        '400':
+          description: Jour ou heure invalide, heure de fin avant l'heure de début
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "heureFin doit être après heureDebut (LUNDI)", statusCode: 400, path: /praticiens/me/disponibilites, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PraticienOnly' }
+        '409':
+          description: Deux plages du même jour se chevauchent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: SlotOverlapException, message: "Les créneaux 09:00-12:00 et 11:00-13:00 du LUNDI se chevauchent", statusCode: 409, path: /praticiens/me/disponibilites, timestamp: "2026-11-26T10:00:00Z" }
+    get:
+      tags: [Disponibilités]
+      summary: Mes disponibilités (praticien)
+      responses:
+        '200':
+          description: Disponibilités du praticien connecté
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Disponibilite' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PraticienOnly' }
+
+  /praticiens/{id}/disponibilites:
+    get:
+      tags: [Disponibilités]
+      summary: Disponibilités hebdomadaires d'un praticien
+      parameters:
+        - { $ref: '#/components/parameters/praticienId' }
+      responses:
+        '200':
+          description: Disponibilités récurrentes
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Disponibilite' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /praticiens/me/indisponibilites:
+    post:
+      tags: [Indisponibilités]
+      summary: Déclarer une indisponibilité ponctuelle (praticien)
+      description: |
+        `dateDebut` / `dateFin` acceptent `YYYY-MM-DD` (journée entière) ou `YYYY-MM-DDTHH:MM` (heure de Paris).
+        Aucun rendez-vous ne pourra être pris sur la période (`PractitionerUnavailableException`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IndisponibiliteRequest' }
+            example: { dateDebut: "2026-12-01T14:00", dateFin: "2026-12-01T18:00", motif: Formation }
       responses:
         '201':
-          description: Disponibilité créée avec succès
+          description: Indisponibilité créée
+          headers:
+            Location: { schema: { type: string } }
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Disponibilite'
+              schema: { $ref: '#/components/schemas/Indisponibilite' }
         '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
+          description: Date invalide ou fin avant début
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "dateFin doit être postérieure à dateDebut", statusCode: 400, path: /praticiens/me/indisponibilites, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PraticienOnly' }
+        '422':
+          description: Période entièrement passée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: PastDateException, message: "L'indisponibilité se termine dans le passé", statusCode: 422, path: /praticiens/me/indisponibilites, timestamp: "2026-11-26T10:00:00Z" }
     get:
-      tags:
-        - Disponibilités
-      summary: Lister les disponibilités
-      description: |
-        Retourne la liste des créneaux de disponibilité.
-        Les patients peuvent filtrer par praticien.
-        Les praticiens voient leurs propres disponibilités.
-      operationId: listDisponibilites
-      parameters:
-        - name: praticienId
-          in: query
-          description: Filtrer par ID du praticien
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: jourSemaine
-          in: query
-          description: Filtrer par jour de la semaine
-          required: false
-          schema:
-            type: string
-            enum: [LUNDI, MARDI, MERCREDI, JEUDI, VENDREDI, SAMEDI, DIMANCHE]
-        - name: dateDebut
-          in: query
-          description: Filtrer par date de début
-          required: false
-          schema:
-            type: string
-            format: date
-        - name: dateFin
-          in: query
-          description: Filtrer par date de fin
-          required: false
-          schema:
-            type: string
-            format: date
-        - name: recurrence
-          in: query
-          description: Filtrer par type de récurrence
-          required: false
-          schema:
-            type: string
-            enum: [PONCTUEL, HEBDOMADAIRE, MENSUEL, ANNUEL]
-        - $ref: '#/components/parameters/page'
-        - $ref: '#/components/parameters/limit'
+      tags: [Indisponibilités]
+      summary: Mes indisponibilités (praticien)
       responses:
         '200':
-          description: Liste des disponibilités
+          description: Indisponibilités triées par date de début
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/DisponibiliteList'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+              schema: { type: array, items: { $ref: '#/components/schemas/Indisponibilite' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PraticienOnly' }
 
-  /disponibilites/{disponibiliteId}:
-    get:
-      tags:
-        - Disponibilités
-      summary: Obtenir une disponibilité
-      description: Retourne les détails d'un créneau de disponibilité
-      operationId: getDisponibiliteById
-      parameters:
-        - $ref: '#/components/parameters/disponibiliteId'
-      responses:
-        '200':
-          description: Détails de la disponibilité
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Disponibilite'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-    patch:
-      tags:
-        - Disponibilités
-      summary: Mettre à jour une disponibilité
-      description: Met à jour un créneau de disponibilité existant
-      operationId: updateDisponibilite
-      parameters:
-        - $ref: '#/components/parameters/disponibiliteId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/DisponibiliteUpdate'
-      responses:
-        '200':
-          description: Disponibilité mise à jour
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Disponibilite'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
+  /praticiens/me/indisponibilites/{id}:
     delete:
-      tags:
-        - Disponibilités
-      summary: Supprimer une disponibilité
-      description: Supprime un créneau de disponibilité
-      operationId: deleteDisponibilite
+      tags: [Indisponibilités]
+      summary: Supprimer une de mes indisponibilités
       parameters:
-        - $ref: '#/components/parameters/disponibiliteId'
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '204':
-          description: Disponibilité supprimée avec succès
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+        '204': { description: Supprimée }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /indisponibilites:
-    post:
-      tags:
-        - Indisponibilités
-      summary: Créer une nouvelle indisponibilité
-      description: |
-        Crée une période d'indisponibilité pour un praticien.
-        Seuls les praticiens peuvent créer des indisponibilités.
-      operationId: createIndisponibilite
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/IndisponibiliteInput'
-      responses:
-        '201':
-          description: Indisponibilité créée avec succès
+          description: L'indisponibilité appartient à un autre praticien
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Indisponibilite'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ForbiddenException, message: "Cette indisponibilité appartient à un autre praticien", statusCode: 403, path: /praticiens/me/indisponibilites/4f1c..., timestamp: "2026-11-26T10:00:00Z" }
+        '404': { $ref: '#/components/responses/NotFound' }
 
+  /praticiens/{id}/creneaux:
     get:
-      tags:
-        - Indisponibilités
-      summary: Lister les indisponibilités
+      tags: [Créneaux]
+      summary: Créneaux libres d'un praticien sur une période
       description: |
-        Retourne la liste des périodes d'indisponibilité.
-        Les patients peuvent filtrer par praticien.
-      operationId: listIndisponibilites
+        Créneaux de 30 minutes calculés à partir des disponibilités hebdomadaires, en excluant
+        les créneaux passés, les indisponibilités ponctuelles et les rendez-vous non annulés. Période de 62 jours maximum.
       parameters:
-        - name: praticienId
-          in: query
-          description: Filtrer par ID du praticien
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: dateDebut
-          in: query
-          description: Filtrer par date de début
-          required: false
-          schema:
-            type: string
-            format: date
-        - name: dateFin
-          in: query
-          description: Filtrer par date de fin
-          required: false
-          schema:
-            type: string
-            format: date
-        - $ref: '#/components/parameters/page'
-        - $ref: '#/components/parameters/limit'
+        - { $ref: '#/components/parameters/praticienId' }
+        - { name: dateDebut, in: query, required: true, schema: { type: string, format: date }, example: "2026-11-30" }
+        - { name: dateFin, in: query, required: true, schema: { type: string, format: date }, example: "2026-12-04" }
       responses:
         '200':
-          description: Liste des indisponibilités
+          description: Créneaux libres
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/IndisponibiliteList'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+              schema: { type: array, items: { $ref: '#/components/schemas/Creneau' } }
+              example:
+                - { date: "2026-11-30", heure: "09:00", duree: 30 }
+                - { date: "2026-11-30", heure: "09:30", duree: 30 }
+        '400':
+          description: Dates manquantes, invalides ou période trop longue
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "La période ne peut pas dépasser 62 jours", statusCode: 400, path: /praticiens/x/creneaux, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/PractitionerNotAvailable' }
 
   /rendezvous:
     post:
-      tags:
-        - Rendez-Vous
-      summary: Créer un nouveau rendez-vous
+      tags: [Rendez-vous]
+      summary: Prendre un rendez-vous
       description: |
-        Crée un nouveau rendez-vous avec un praticien.
-        Le patient doit être authentifié.
-        Le créneau doit être disponible.
-      operationId: createRendezVous
+        Un **patient** réserve pour lui-même. Un **praticien** peut créer un rendez-vous dans son propre agenda
+        en précisant `patientId`. Le rendez-vous est créé au statut PLANIFIE.
+
+        Vérifications, dans l'ordre : date future → praticien ACTIF → pas d'indisponibilité ponctuelle →
+        dans les disponibilités hebdomadaires → créneau libre.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/RendezVousInput'
+            schema: { $ref: '#/components/schemas/RendezVousRequest' }
+            examples:
+              patient:
+                summary: Un patient réserve
+                value: { praticienId: "e9609385-19d9-4f11-8870-2be7c7ed9802", date: "2026-11-30", heure: "09:30", motif: Douleurs au dos }
+              praticien:
+                summary: Un praticien réserve pour un patient
+                value: { praticienId: "e9609385-19d9-4f11-8870-2be7c7ed9802", patientId: "ec64eced-b845-489e-9a26-db2bd4f84c40", date: "2026-11-30", heure: "10:00", duree: 45, motif: Suivi }
       responses:
         '201':
-          description: Rendez-vous créé avec succès
+          description: Rendez-vous créé (PLANIFIE)
+          headers:
+            Location: { schema: { type: string }, description: "/rendezvous/{rdvId}" }
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/RendezVous'
+              schema: { $ref: '#/components/schemas/RendezVous' }
         '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+          description: Date/heure mal formée, durée hors bornes (10-180 min), patientId manquant (praticien)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "date doit être une date valide au format YYYY-MM-DD", statusCode: 400, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          $ref: '#/components/responses/Forbidden'
+          description: Un praticien tente de réserver dans l'agenda d'un confrère
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ForbiddenException, message: "Un praticien ne peut créer des rendez-vous que dans son propre agenda", statusCode: 403, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
+        '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Conflit
+          description: Conflit avec l'agenda du praticien
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          examples:
-            slotNotAvailable:
-              value:
-                error: "SlotNotAvailableException"
-                message: "Le créneau sélectionné n'est pas disponible"
-                statusCode: 409
-            patientConflict:
-              value:
-                error: "PatientAlreadyHasAppointmentException"
-                message: "Vous avez déjà un rendez-vous à ce créneau"
-                statusCode: 409
-            praticienNotAvailable:
-              value:
-                error: "PraticienNotAvailableException"
-                message: "Le praticien n'est pas disponible à ce créneau"
-                statusCode: 409
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                SlotAlreadyTaken:
+                  summary: Créneau déjà occupé
+                  value: { error: SlotAlreadyTakenException, message: "Le créneau du 2026-11-30 à 09:30 est déjà occupé", statusCode: 409, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
+                PractitionerNotAvailable:
+                  summary: Praticien EN_CONGE ou INACTIF
+                  value: { error: PractitionerNotAvailableException, message: "Le praticien est EN_CONGE et ne peut pas recevoir de rendez-vous", statusCode: 409, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
+                PractitionerUnavailable:
+                  summary: Indisponibilité ponctuelle
+                  value: { error: PractitionerUnavailableException, message: "Le praticien a déclaré une indisponibilité sur ce créneau", statusCode: 409, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
+        '422':
+          description: Rendez-vous dans le passé ou hors des disponibilités
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                PastDate:
+                  summary: Date passée
+                  value: { error: PastDateException, message: "Le rendez-vous du 2026-11-25 à 10:00 est dans le passé", statusCode: 422, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
+                OutsideAvailability:
+                  summary: Hors disponibilités
+                  value: { error: OutsideAvailabilityException, message: "Le créneau 13:00 (30 min) est en dehors des disponibilités du praticien", statusCode: 422, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
     get:
-      tags:
-        - Rendez-Vous
-      summary: Lister les rendez-vous
-      description: |
-        Retourne la liste des rendez-vous.
-        Les patients voient leurs propres rendez-vous.
-        Les praticiens voient tous les rendez-vous.
-      operationId: listRendezVous
+      tags: [Rendez-vous]
+      summary: Mes rendez-vous (paginés, filtrables par statut et date)
+      description: Patient → ses rendez-vous ; praticien → son agenda. Tri par date puis heure.
       parameters:
-        - name: patientId
-          in: query
-          description: Filtrer par ID du patient
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: praticienId
-          in: query
-          description: Filtrer par ID du praticien
-          required: false
-          schema:
-            type: string
-            format: uuid
         - name: statut
           in: query
-          description: Filtrer par statut
-          required: false
-          schema:
-            type: string
-            enum: [CONFIRME, ANNULE, TERMINE, NO_SHOW]
-        - name: dateDebut
-          in: query
-          description: Filtrer par date de début
-          required: false
-          schema:
-            type: string
-            format: date
-        - name: dateFin
-          in: query
-          description: Filtrer par date de fin
-          required: false
-          schema:
-            type: string
-            format: date
-        - $ref: '#/components/parameters/page'
-        - $ref: '#/components/parameters/limit'
+          description: Un ou plusieurs statuts séparés par des virgules
+          schema: { type: string }
+          example: PLANIFIE,CONFIRME
+        - { name: dateDebut, in: query, description: Inclus, schema: { type: string, format: date }, example: "2026-11-30" }
+        - { name: dateFin, in: query, description: Inclus, schema: { type: string, format: date }, example: "2026-12-06" }
+        - { $ref: '#/components/parameters/page' }
+        - { $ref: '#/components/parameters/limit' }
       responses:
         '200':
-          description: Liste des rendez-vous
+          description: Page de rendez-vous
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RendezVousList'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/RendezVous' } }
+        '400':
+          description: Statut inconnu, date invalide, pagination invalide
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "statut invalide : XYZ (valeurs possibles : [PLANIFIE, CONFIRME, EN_COURS, TERMINE, ANNULE, NON_VENU])", statusCode: 400, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
-  /rendezvous/{rendezVousId}:
+  /rendezvous/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/rdvId' }
     get:
-      tags:
-        - Rendez-Vous
-      summary: Obtenir un rendez-vous
-      description: Retourne les détails d'un rendez-vous
-      operationId: getRendezVousById
-      parameters:
-        - $ref: '#/components/parameters/rendezVousId'
+      tags: [Rendez-vous]
+      summary: Détail d'un rendez-vous (patient ou praticien concerné)
       responses:
         '200':
-          description: Détails du rendez-vous
+          description: Rendez-vous
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/RendezVousAvecDetails'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /patients/{patientId}/rendezvous:
-    get:
-      tags:
-        - Rendez-Vous
-      summary: Lister les rendez-vous d'un patient
-      description: Retourne la liste des rendez-vous d'un patient spécifique
-      operationId: listRendezVousByPatient
-      parameters:
-        - $ref: '#/components/parameters/patientId'
-        - name: statut
-          in: query
-          description: Filtrer par statut
-          required: false
-          schema:
-            type: string
-            enum: [CONFIRME, ANNULE, TERMINE, NO_SHOW]
-        - $ref: '#/components/parameters/page'
-        - $ref: '#/components/parameters/limit'
-      responses:
-        '200':
-          description: Liste des rendez-vous du patient
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/RendezVous'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /rendezvous/{rendezVousId}/annuler:
+              schema: { $ref: '#/components/schemas/RendezVous' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotParticipant' }
+        '404': { $ref: '#/components/responses/NotFound' }
     patch:
-      tags:
-        - Rendez-Vous
-      summary: Annuler un rendez-vous
-      description: |
-        Annule un rendez-vous existant.
-        Un patient peut annuler ses propres rendez-vous.
-        Un praticien peut annuler les rendez-vous de ses patients.
-      operationId: annulerRendezVous
-      parameters:
-        - $ref: '#/components/parameters/rendezVousId'
+      tags: [Rendez-vous]
+      summary: Confirmer, démarrer, terminer, annuler ou déclarer absent
+      description: Fait évoluer le statut en respectant le cycle de vie décrit en tête de page.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StatutRdvRequest' }
+            examples:
+              confirmer: { summary: Confirmer, value: { statut: CONFIRME } }
+              demarrer: { summary: Démarrer la consultation (praticien), value: { statut: EN_COURS } }
+              terminer: { summary: Terminer la consultation (praticien), value: { statut: TERMINE } }
+              annuler: { summary: Annuler, value: { statut: ANNULE } }
+              absent: { summary: Patient absent (praticien), value: { statut: NON_VENU } }
       responses:
         '200':
-          description: Rendez-vous annulé
+          description: Rendez-vous mis à jour
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/RendezVous'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+              schema: { $ref: '#/components/schemas/RendezVous' }
+        '400':
+          description: Statut inconnu
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "statut invalide : FINI (CONFIRME, EN_COURS, TERMINE, ANNULE, NON_VENU)", statusCode: 400, path: /rendezvous/8a1f..., timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          description: Conflit - Rendez-vous déjà commencé
+          description: Pas participant, ou action réservée au praticien
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          example:
-            error: "AppointmentAlreadyStartedException"
-            message: "Le rendez-vous a déjà commencé et ne peut plus être annulé"
-            statusCode: 409
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ForbiddenException, message: "Seul le praticien du rendez-vous peut le passer en EN_COURS", statusCode: 403, path: /rendezvous/8a1f..., timestamp: "2026-11-26T10:00:00Z" }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Transition impossible ou annulation trop tardive
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                CancellationTooLate:
+                  summary: Annulation moins de 2h avant
+                  value: { error: CancellationTooLateException, message: "Annulation impossible moins de 2h avant le rendez-vous (il reste 70 min)", statusCode: 409, path: /rendezvous/8a1f..., timestamp: "2026-11-26T10:00:00Z" }
+                InvalidTransition:
+                  summary: Transition interdite
+                  value: { error: InvalidStatusTransitionException, message: "Transition PLANIFIE → TERMINE impossible", statusCode: 409, path: /rendezvous/8a1f..., timestamp: "2026-11-26T10:00:00Z" }
 
-  /rendezvous/{rendezVousId}/finaliser:
+  /rendezvous/{id}/compte-rendu:
+    parameters:
+      - { $ref: '#/components/parameters/rdvId' }
     post:
-      tags:
-        - Rendez-Vous
-        - Comptes Rendus
-      summary: Finaliser un rendez-vous et créer un compte rendu
+      tags: [Comptes rendus]
+      summary: Rédiger le compte rendu (praticien du rendez-vous)
       description: |
-        Finalise un rendez-vous et crée un compte rendu de consultation.
-        Seul le praticien du rendez-vous peut le finaliser.
-      operationId: finaliserRendezVous
-      parameters:
-        - $ref: '#/components/parameters/rendezVousId'
+        Le rendez-vous doit être **TERMINE**. Le compte rendu est créé en BROUILLON,
+        ou directement FINALISE si `finaliser: true`. Une ordonnance ne peut être émise qu'après finalisation.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/CompteRenduInput'
+            schema: { $ref: '#/components/schemas/CompteRenduRequest' }
+            example: { contenu: "Lombalgie commune sans signe de gravité. Repos relatif, antalgiques.", diagnostic: Lombalgie aiguë, finaliser: false }
       responses:
         '201':
-          description: Compte rendu créé avec succès
+          description: Compte rendu créé
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/CompteRendu'
+              schema: { $ref: '#/components/schemas/CompteRendu' }
         '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          description: Conflit
+          description: Contenu de moins de 10 caractères
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          examples:
-            alreadyTerminated:
-              value:
-                error: "RendezVousAlreadyTerminatedException"
-                message: "Le rendez-vous est déjà terminé"
-                statusCode: 409
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /rendezvous/{rendezVousId}/compte-rendu/finaliser:
-    post:
-      tags:
-        - Comptes Rendus
-      summary: Finaliser un compte rendu
-      description: |
-        Finalise un compte rendu de consultation.
-        Seul le praticien peut finaliser un compte rendu.
-      operationId: finaliserCompteRendu
-      parameters:
-        - $ref: '#/components/parameters/rendezVousId'
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "contenu : doit contenir au moins 10 caractères", statusCode: 400, path: /rendezvous/8a1f.../compte-rendu, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotRdvPraticien' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Rendez-vous non TERMINE, ou compte rendu déjà existant
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                ConsultationNotFinalized:
+                  summary: Rendez-vous non terminé
+                  value: { error: ConsultationNotFinalizedException, message: "Le rendez-vous doit être TERMINE pour rédiger le compte rendu (statut actuel : CONFIRME)", statusCode: 409, path: /rendezvous/8a1f.../compte-rendu, timestamp: "2026-11-26T10:00:00Z" }
+                Conflict:
+                  summary: Déjà rédigé
+                  value: { error: ConflictException, message: "Un compte rendu existe déjà pour ce rendez-vous (utilisez PUT pour le modifier)", statusCode: 409, path: /rendezvous/8a1f.../compte-rendu, timestamp: "2026-11-26T10:00:00Z" }
+    put:
+      tags: [Comptes rendus]
+      summary: Modifier le compte rendu (tant qu'il est en BROUILLON)
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/CompteRenduFinalisationInput'
+            schema: { $ref: '#/components/schemas/CompteRenduRequest' }
+            example: { contenu: "Lombalgie commune sans signe de gravité. Kinésithérapie conseillée.", diagnostic: Lombalgie aiguë, finaliser: true }
+      responses:
+        '200':
+          description: Compte rendu mis à jour
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompteRendu' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotRdvPraticien' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AlreadyFinalized' }
+    get:
+      tags: [Comptes rendus]
+      summary: Consulter le compte rendu
+      description: Le patient ne voit le compte rendu qu'une fois finalisé.
+      responses:
+        '200':
+          description: Compte rendu
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompteRendu' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotParticipant' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /rendezvous/{id}/compte-rendu/finalisation:
+    post:
+      tags: [Comptes rendus]
+      summary: Finaliser le compte rendu
+      description: Le compte rendu devient définitif (plus modifiable) ; l'ordonnance peut alors être émise.
+      parameters:
+        - { $ref: '#/components/parameters/rdvId' }
       responses:
         '200':
           description: Compte rendu finalisé
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/CompteRendu'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          description: Conflit - Compte rendu déjà finalisé
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          example:
-            error: "ConsultationAlreadyFinalizedException"
-            message: "Le compte rendu est déjà finalisé"
-            statusCode: 409
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /comptes-rendus/{compteRenduId}:
-    get:
-      tags:
-        - Comptes Rendus
-      summary: Obtenir un compte rendu
-      description: Retourne les détails d'un compte rendu de consultation
-      operationId: getCompteRenduById
-      parameters:
-        - name: compteRenduId
-          in: path
-          required: true
-          description: ID du compte rendu
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Détails du compte rendu
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CompteRendu'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /patients/{patientId}/comptes-rendus:
-    get:
-      tags:
-        - Comptes Rendus
-      summary: Lister les comptes rendus d'un patient
-      description: Retourne la liste des comptes rendus d'un patient
-      operationId: listComptesRendusByPatient
-      parameters:
-        - $ref: '#/components/parameters/patientId'
-        - name: statut
-          in: query
-          description: Filtrer par statut
-          required: false
-          schema:
-            type: string
-            enum: [EN_COURS, FINALISE]
-        - $ref: '#/components/parameters/page'
-        - $ref: '#/components/parameters/limit'
-      responses:
-        '200':
-          description: Liste des comptes rendus
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/CompteRendu'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+              schema: { $ref: '#/components/schemas/CompteRendu' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotRdvPraticien' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/AlreadyFinalized' }
 
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: Token JWT pour l'authentification
-
-  schemas:
-    Disponibilite:
-      type: object
-      properties:
-        disponibiliteId:
-          type: string
-          format: uuid
-          example: "disponibilite-uuid-1234"
-        praticienId:
-          type: string
-          format: uuid
-          example: "praticien-uuid-1234"
-        dateDebut:
-          type: string
-          format: date-time
-          example: "2023-12-01T09:00:00Z"
-          description: Date et heure de début du créneau
-        dateFin:
-          type: string
-          format: date-time
-          example: "2023-12-01T17:00:00Z"
-          description: Date et heure de fin du créneau
-        jourSemaine:
-          type: string
-          enum: [LUNDI, MARDI, MERCREDI, JEUDI, VENDREDI, SAMEDI, DIMANCHE]
-          example: "LUNDI"
-          description: Jour de la semaine (pour les récurrences)
-        recurrence:
-          type: string
-          enum: [PONCTUEL, HEBDOMADAIRE, MENSUEL, ANNUEL]
-          example: "HEBDOMADAIRE"
-          description: Type de récurrence
-        statut:
-          type: string
-          enum: [ACTIVE, DESACTIVE]
-          example: "ACTIVE"
-        createdAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-        updatedAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-
-    DisponibiliteInput:
-      type: object
-      required:
-        - dateDebut
-        - dateFin
-      properties:
-        dateDebut:
-          type: string
-          format: date-time
-          example: "2023-12-01T09:00:00Z"
-        dateFin:
-          type: string
-          format: date-time
-          example: "2023-12-01T17:00:00Z"
-        jourSemaine:
-          type: string
-          enum: [LUNDI, MARDI, MERCREDI, JEUDI, VENDREDI, SAMEDI, DIMANCHE]
-          example: "LUNDI"
-        recurrence:
-          type: string
-          enum: [PONCTUEL, HEBDOMADAIRE, MENSUEL, ANNUEL]
-          default: PONCTUEL
-          example: "HEBDOMADAIRE"
-
-    DisponibiliteUpdate:
-      type: object
-      properties:
-        dateDebut:
-          type: string
-          format: date-time
-          example: "2023-12-01T09:00:00Z"
-        dateFin:
-          type: string
-          format: date-time
-          example: "2023-12-01T17:00:00Z"
-        jourSemaine:
-          type: string
-          enum: [LUNDI, MARDI, MERCREDI, JEUDI, VENDREDI, SAMEDI, DIMANCHE]
-        recurrence:
-          type: string
-          enum: [PONCTUEL, HEBDOMADAIRE, MENSUEL, ANNUEL]
-        statut:
-          type: string
-          enum: [ACTIVE, DESACTIVE]
-
-    DisponibiliteList:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Disponibilite'
-        count:
-          type: integer
-          example: 10
-        page:
-          type: integer
-          example: 1
-        limit:
-          type: integer
-          example: 10
-
-    Indisponibilite:
-      type: object
-      properties:
-        indisponibiliteId:
-          type: string
-          format: uuid
-          example: "indisponibilite-uuid-1234"
-        praticienId:
-          type: string
-          format: uuid
-          example: "praticien-uuid-1234"
-        dateDebut:
-          type: string
-          format: date-time
-          example: "2023-12-25T00:00:00Z"
-        dateFin:
-          type: string
-          format: date-time
-          example: "2023-12-26T00:00:00Z"
-        raison:
-          type: string
-          maxLength: 500
-          example: "Congé de Noël"
-        createdAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-
-    IndisponibiliteInput:
-      type: object
-      required:
-        - dateDebut
-        - dateFin
-        - raison
-      properties:
-        dateDebut:
-          type: string
-          format: date-time
-          example: "2023-12-25T00:00:00Z"
-        dateFin:
-          type: string
-          format: date-time
-          example: "2023-12-26T00:00:00Z"
-        raison:
-          type: string
-          maxLength: 500
-          example: "Congé de Noël"
-
-    IndisponibiliteList:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Indisponibilite'
-        count:
-          type: integer
-          example: 5
-        page:
-          type: integer
-          example: 1
-        limit:
-          type: integer
-          example: 10
-
-    RendezVous:
-      type: object
-      properties:
-        rendezVousId:
-          type: string
-          format: uuid
-          example: "rendez-vous-uuid-1234"
-        patientId:
-          type: string
-          format: uuid
-          example: "patient-uuid-1234"
-        praticienId:
-          type: string
-          format: uuid
-          example: "praticien-uuid-1234"
-        dateHeure:
-          type: string
-          format: date-time
-          example: "2023-12-15T10:00:00Z"
-        statut:
-          type: string
-          enum: [CONFIRME, ANNULE, TERMINE, NO_SHOW]
-          example: "CONFIRME"
-        motif:
-          type: string
-          maxLength: 500
-          example: "Consultation de routine"
-        duree:
-          type: integer
-          example: 30
-          description: Durée en minutes
-        createdAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-        updatedAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-
-    RendezVousInput:
-      type: object
-      required:
-        - praticienId
-        - dateHeure
-      properties:
-        praticienId:
-          type: string
-          format: uuid
-          example: "praticien-uuid-1234"
-        dateHeure:
-          type: string
-          format: date-time
-          example: "2023-12-15T10:00:00Z"
-        motif:
-          type: string
-          maxLength: 500
-          example: "Consultation de routine"
-
-    RendezVousList:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/RendezVous'
-        count:
-          type: integer
-          example: 10
-        page:
-          type: integer
-          example: 1
-        limit:
-          type: integer
-          example: 10
-
-    RendezVousAvecDetails:
-      type: object
-      allOf:
-        - $ref: '#/components/schemas/RendezVous'
-        - type: object
-          properties:
-            praticien:
-              type: object
-              properties:
-                userId:
-                  type: string
-                  format: uuid
-                nom:
-                  type: string
-                  example: "Dr. Martin"
-                specialite:
-                  type: string
-                  example: "Médecine Générale"
-            patient:
-              type: object
-              properties:
-                userId:
-                  type: string
-                  format: uuid
-                nom:
-                  type: string
-                  example: "Jean Dupont"
-
-    CompteRendu:
-      type: object
-      properties:
-        compteRenduId:
-          type: string
-          format: uuid
-          example: "compte-rendu-uuid-1234"
-        rendezVousId:
-          type: string
-          format: uuid
-          example: "rendez-vous-uuid-1234"
-        patientId:
-          type: string
-          format: uuid
-          example: "patient-uuid-1234"
-        praticienId:
-          type: string
-          format: uuid
-          example: "praticien-uuid-1234"
-        diagnostic:
-          type: string
-          maxLength: 2000
-          example: "Diagnostic détaillé du patient"
-        traitement:
-          type: string
-          maxLength: 2000
-          example: "Traitement prescrit"
-        resume:
-          type: string
-          maxLength: 500
-          example: "Résumé de la consultation"
-        statut:
-          type: string
-          enum: [EN_COURS, FINALISE]
-          example: "EN_COURS"
-        dateFinalisation:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-        createdAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-        updatedAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-
-    CompteRenduInput:
-      type: object
-      required:
-        - diagnostic
-      properties:
-        diagnostic:
-          type: string
-          maxLength: 2000
-          example: "Diagnostic détaillé"
-        traitement:
-          type: string
-          maxLength: 2000
-          example: "Traitement prescrit"
-        resume:
-          type: string
-          maxLength: 500
-          example: "Résumé de la consultation"
-
-    CompteRenduFinalisationInput:
-      type: object
-      required:
-        - resume
-      properties:
-        resume:
-          type: string
-          maxLength: 500
-          example: "Résumé final de la consultation"
-
-    Error:
-      type: object
-      required:
-        - error
-        - message
-        - statusCode
-      properties:
-        error:
-          type: string
-          example: "NotFound"
-        message:
-          type: string
-          example: "Ressource non trouvée"
-        statusCode:
-          type: integer
-          example: 404
-
-  responses:
-    BadRequest:
-      description: Requête invalide
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-    Unauthorized:
-      description: Non autorisé
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-    Forbidden:
-      description: Accès interdit
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-    NotFound:
-      description: Ressource non trouvée
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-    InternalServerError:
-      description: Erreur interne du serveur
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
 
   parameters:
-    disponibiliteId:
-      name: disponibiliteId
+    praticienId:
+      name: id
       in: path
       required: true
-      description: ID de la disponibilité
-      schema:
-        type: string
-        format: uuid
-
-    rendezVousId:
-      name: rendezVousId
+      description: Identifiant du praticien
+      schema: { type: string, format: uuid }
+    rdvId:
+      name: id
       in: path
       required: true
-      description: ID du rendez-vous
-      schema:
-        type: string
-        format: uuid
-
-    patientId:
-      name: patientId
-      in: path
-      required: true
-      description: ID du patient
-      schema:
-        type: string
-        format: uuid
-
+      description: Identifiant du rendez-vous
+      schema: { type: string, format: uuid }
     page:
       name: page
       in: query
-      description: Numéro de la page
-      required: false
-      schema:
-        type: integer
-        minimum: 1
-        default: 1
-
+      schema: { type: integer, minimum: 1, default: 1 }
     limit:
       name: limit
       in: query
-      description: Nombre d'éléments par page
-      required: false
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 100
-        default: 10
+      schema: { type: integer, minimum: 1, maximum: 100, default: 10 }
+
+  responses:
+    ValidationError:
+      description: Requête invalide
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: ValidationException, message: "Corps de requête JSON invalide", statusCode: 400, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
+    Unauthorized:
+      description: Token JWT manquant, expiré ou invalide
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: UnauthorizedException, message: "Token JWT manquant ou invalide", statusCode: 401, path: /rendezvous, timestamp: "2026-11-26T10:00:00Z" }
+    PraticienOnly:
+      description: Action réservée aux praticiens
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: ForbiddenException, message: "Seul un praticien peut effectuer cette action", statusCode: 403, path: /praticiens/me/disponibilites, timestamp: "2026-11-26T10:00:00Z" }
+    NotParticipant:
+      description: L'utilisateur ne participe pas à ce rendez-vous
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: ForbiddenException, message: "Vous ne participez pas à ce rendez-vous", statusCode: 403, path: /rendezvous/8a1f..., timestamp: "2026-11-26T10:00:00Z" }
+    NotRdvPraticien:
+      description: L'utilisateur n'est pas le praticien du rendez-vous
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: ForbiddenException, message: "Vous n'êtes pas le praticien de ce rendez-vous", statusCode: 403, path: /rendezvous/8a1f.../compte-rendu, timestamp: "2026-11-26T10:00:00Z" }
+    NotFound:
+      description: Ressource introuvable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: NotFoundException, message: "Rendez-vous 8a1f... non trouvé", statusCode: 404, path: /rendezvous/8a1f..., timestamp: "2026-11-26T10:00:00Z" }
+    PractitionerNotAvailable:
+      description: Praticien EN_CONGE ou INACTIF
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: PractitionerNotAvailableException, message: "Le praticien est EN_CONGE et ne peut pas recevoir de rendez-vous", statusCode: 409, path: /praticiens/x/creneaux, timestamp: "2026-11-26T10:00:00Z" }
+    AlreadyFinalized:
+      description: Le compte rendu est déjà finalisé
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: CompteRenduAlreadyFinalizedException, message: "Le compte rendu est finalisé et ne peut plus être modifié", statusCode: 409, path: /rendezvous/8a1f.../compte-rendu, timestamp: "2026-11-26T10:00:00Z" }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string, description: Nom de l'exception métier }
+        message: { type: string }
+        statusCode: { type: integer }
+        path: { type: string }
+        timestamp: { type: string, format: date-time }
+    Page:
+      type: object
+      properties:
+        count: { type: integer, description: Nombre total d'éléments }
+        page: { type: integer }
+        limit: { type: integer }
+    JourSemaine:
+      type: string
+      enum: [LUNDI, MARDI, MERCREDI, JEUDI, VENDREDI, SAMEDI, DIMANCHE]
+    StatutRdv:
+      type: string
+      enum: [PLANIFIE, CONFIRME, EN_COURS, TERMINE, ANNULE, NON_VENU]
+    DisponibilitesRequest:
+      type: object
+      required: [disponibilites]
+      properties:
+        disponibilites:
+          type: array
+          items:
+            type: object
+            required: [jourSemaine, heureDebut, heureFin]
+            properties:
+              jourSemaine: { $ref: '#/components/schemas/JourSemaine' }
+              heureDebut: { type: string, pattern: '^\d{2}:\d{2}$', example: "09:00" }
+              heureFin: { type: string, pattern: '^\d{2}:\d{2}$', example: "12:00" }
+    Disponibilite:
+      type: object
+      properties:
+        dispoId: { type: string, format: uuid }
+        praticienId: { type: string, format: uuid }
+        jourSemaine: { $ref: '#/components/schemas/JourSemaine' }
+        heureDebut: { type: string, example: "09:00" }
+        heureFin: { type: string, example: "12:00" }
+        recurrente: { type: boolean, example: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    IndisponibiliteRequest:
+      type: object
+      required: [dateDebut, dateFin]
+      properties:
+        dateDebut: { type: string, example: "2026-12-01T14:00" }
+        dateFin: { type: string, example: "2026-12-01T18:00" }
+        motif: { type: string, example: Formation }
+    Indisponibilite:
+      type: object
+      properties:
+        indispoId: { type: string, format: uuid }
+        praticienId: { type: string, format: uuid }
+        dateDebut: { type: string, example: "2026-12-01T14:00" }
+        dateFin: { type: string, example: "2026-12-01T18:00" }
+        motif: { type: string }
+        recurrente: { type: boolean, example: false }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    Creneau:
+      type: object
+      properties:
+        date: { type: string, format: date }
+        heure: { type: string, example: "09:30" }
+        duree: { type: integer, example: 30 }
+    RendezVousRequest:
+      type: object
+      required: [praticienId, date, heure]
+      properties:
+        praticienId: { type: string, format: uuid }
+        date: { type: string, format: date }
+        heure: { type: string, pattern: '^\d{2}:\d{2}$' }
+        duree: { type: integer, minimum: 10, maximum: 180, default: 30 }
+        motif: { type: string }
+        patientId: { type: string, format: uuid, description: Obligatoire si l'appelant est un praticien }
+    StatutRdvRequest:
+      type: object
+      required: [statut]
+      properties:
+        statut: { type: string, enum: [CONFIRME, EN_COURS, TERMINE, ANNULE, NON_VENU] }
+    RendezVous:
+      type: object
+      properties:
+        rdvId: { type: string, format: uuid }
+        praticienId: { type: string, format: uuid }
+        praticienNom: { type: string }
+        patientId: { type: string, format: uuid }
+        patientNom: { type: string }
+        date: { type: string, format: date }
+        heure: { type: string }
+        duree: { type: integer }
+        motif: { type: string }
+        statut: { $ref: '#/components/schemas/StatutRdv' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      example:
+        rdvId: "8a1f2c3d-0000-4000-8000-000000000001"
+        praticienId: "e9609385-19d9-4f11-8870-2be7c7ed9802"
+        praticienNom: Claire Martin
+        patientId: "ec64eced-b845-489e-9a26-db2bd4f84c40"
+        patientNom: Alice Dupont
+        date: "2026-11-30"
+        heure: "09:30"
+        duree: 30
+        motif: Douleurs au dos
+        statut: PLANIFIE
+        createdAt: "2026-11-26T09:00:00Z"
+        updatedAt: "2026-11-26T09:00:00Z"
+    CompteRenduRequest:
+      type: object
+      required: [contenu]
+      properties:
+        contenu: { type: string, minLength: 10 }
+        diagnostic: { type: string }
+        finaliser: { type: boolean, default: false }
+    CompteRendu:
+      type: object
+      properties:
+        compteRenduId: { type: string, format: uuid }
+        rdvId: { type: string, format: uuid }
+        praticienId: { type: string, format: uuid }
+        patientId: { type: string, format: uuid }
+        contenu: { type: string }
+        diagnostic: { type: string }
+        statut: { type: string, enum: [BROUILLON, FINALISE] }
+        dateFinalisation: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }

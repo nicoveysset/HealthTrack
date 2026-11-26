@@ -1,16 +1,12 @@
 package com.healthtrack.utilisateurs.dto;
-
 import com.healthtrack.utilisateurs.model.User;
-import com.healthtrack.utilisateurs.model.UserType;
-import com.healthtrack.utilisateurs.model.PraticienStatut;
-import java.time.Instant;
 
 public record UserResponse(
-    String userId, String email, UserType type,
+    String userId, String email, String type,
     String name, String firstName, String lastName,
-    String specialite, String rpps, PraticienStatut statut,
+    String specialite, String rpps, String statut,
     String dateNaissance, String nss, String medecinTraitantId,
-    Instant createdAt, Instant updatedAt
+    String createdAt, String updatedAt
 ) {
     public static UserResponse from(User user) {
         return new UserResponse(

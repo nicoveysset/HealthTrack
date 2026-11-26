@@ -1,34 +1,26 @@
 openapi: 3.0.3
 info:
-  title: HealthTrack API - Ordonnances & Médicaments
+  title: HealthTrack — API Ordonnances
+  version: 2.0.0
   description: |
-    API de gestion des ordonnances et médicaments pour l'application HealthTrack.
-    
-    Cette API permet la création et gestion des ordonnances, des lignes de prescription,
-    et la gestion des médicaments.
-  version: 1.0.0
-  contact:
-    name: HealthTrack Team
-    email: contact@healthtrack.com
-  license:
-    name: MIT
-    url: https://opensource.org/licenses/MIT
+    Ordonnances émises à l'issue d'une consultation, lignes de prescription et référentiel de médicaments.
+
+    **Création** : sur un rendez-vous **TERMINE** dont le compte rendu est **finalisé**, uniquement par le praticien
+    qui a réalisé la consultation. Validité : 3 mois. Une ordonnance dont la date de validité est dépassée passe
+    automatiquement au statut EXPIREE et n'est plus modifiable.
+
+    **Alertes CloudWatch** (namespace `HealthTrack/Ordonnances`, format Embedded Metric Format) :
+    - `AllergyConflict` : tentative de prescription d'un médicament auquel le patient est allergique ;
+    - `PrescriptionLongueDuree` : ligne de prescription de plus de 90 jours (la ligne est acceptée).
 
 servers:
-  - url: https://api.healthtrack.com/ordonnances
-    description: Production server
-  - url: https://staging-api.healthtrack.com/ordonnances
-    description: Staging server
-  - url: http://localhost:3000/ordonnances
-    description: Development server
+  - url: /
+    description: Même hôte que cette page (API Gateway sur AWS, localhost:8084 en local)
 
 tags:
   - name: Ordonnances
-    description: Gestion des ordonnances
-  - name: Lignes de Prescription
-    description: Gestion des lignes de prescription
+  - name: Lignes de prescription
   - name: Médicaments
-    description: Gestion des médicaments
 
 security:
   - bearerAuth: []
@@ -36,630 +28,339 @@ security:
 paths:
   /ordonnances:
     post:
-      tags:
-        - Ordonnances
-      summary: Créer une nouvelle ordonnance
-      description: |
-        Crée une nouvelle ordonnance basée sur un compte rendu finalisé.
-        Seul le praticien qui a rédigé le compte rendu peut créer une ordonnance.
-      operationId: createOrdonnance
+      tags: [Ordonnances]
+      summary: Créer une ordonnance sur un rendez-vous
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/OrdonnanceInput'
+            schema: { $ref: '#/components/schemas/OrdonnanceRequest' }
+            example: { rdvId: "8a1f2c3d-0000-4000-8000-000000000001" }
       responses:
         '201':
-          description: Ordonnance créée avec succès
+          description: Ordonnance créée (ACTIVE, valable 3 mois)
+          headers:
+            Location: { schema: { type: string }, description: "/ordonnances/{ordonnanceId}" }
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Ordonnance'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+              schema: { $ref: '#/components/schemas/Ordonnance' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+          description: L'appelant n'est pas le praticien ayant réalisé la consultation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ForbiddenException, message: "Seul le praticien ayant réalisé la consultation peut créer l'ordonnance", statusCode: 403, path: /ordonnances, timestamp: "2026-11-26T10:00:00Z" }
+        '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Conflit
+          description: Consultation non terminée / compte rendu non finalisé, ou ordonnance déjà émise
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          examples:
-            notFinalized:
-              value:
-                error: "ConsultationNotFinalizedException"
-                message: "Le compte rendu n'est pas finalisé"
-                statusCode: 409
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                NotTermine:
+                  summary: Rendez-vous non TERMINE
+                  value: { error: ConsultationNotFinalizedException, message: "Le rendez-vous doit être TERMINE pour émettre une ordonnance (statut actuel : CONFIRME)", statusCode: 409, path: /ordonnances, timestamp: "2026-11-26T10:00:00Z" }
+                CrNonFinalise:
+                  summary: Compte rendu non finalisé
+                  value: { error: ConsultationNotFinalizedException, message: "Le compte rendu de la consultation doit être finalisé avant l'ordonnance", statusCode: 409, path: /ordonnances, timestamp: "2026-11-26T10:00:00Z" }
+                Doublon:
+                  summary: Ordonnance déjà émise
+                  value: { error: ConflictException, message: "Une ordonnance existe déjà pour ce rendez-vous", statusCode: 409, path: /ordonnances, timestamp: "2026-11-26T10:00:00Z" }
     get:
-      tags:
-        - Ordonnances
-      summary: Lister les ordonnances
+      tags: [Ordonnances]
+      summary: Lister des ordonnances (paginé, filtrable)
       description: |
-        Liste les ordonnances avec pagination et filtrage.
-        - Les patients voient seulement leurs propres ordonnances
-        - Les praticiens voient toutes les ordonnances (ou filtrées par patient)
-      operationId: listOrdonnances
+        - **Patient** : ses propres ordonnances.
+        - **Praticien** : les ordonnances qu'il a émises, ou celles d'un patient (`patientId`) s'il l'a déjà reçu en consultation.
       parameters:
-        - name: patientId
-          in: query
-          description: Filtrer par ID du patient
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: statut
-          in: query
-          description: Filtrer par statut
-          required: false
-          schema:
-            type: string
-            enum: [ACTIVE, EXPIREE]
-        - name: dateDebut
-          in: query
-          description: Filtrer par date de début
-          required: false
-          schema:
-            type: string
-            format: date
-        - name: dateFin
-          in: query
-          description: Filtrer par date de fin
-          required: false
-          schema:
-            type: string
-            format: date
-        - $ref: '#/components/parameters/page'
-        - $ref: '#/components/parameters/limit'
+        - { name: patientId, in: query, schema: { type: string, format: uuid } }
+        - { name: rdvId, in: query, schema: { type: string, format: uuid } }
+        - { name: statut, in: query, schema: { type: string, enum: [ACTIVE, EXPIREE] } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
       responses:
         '200':
-          description: Liste des ordonnances
+          description: Page d'ordonnances (plus récentes d'abord)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OrdonnanceList'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
-  /ordonnances/{ordonnanceId}:
-    get:
-      tags:
-        - Ordonnances
-      summary: Obtenir une ordonnance
-      description: |
-        Retourne une ordonnance avec ses lignes de prescription.
-        Seuls le patient ou le praticien concerné peuvent accéder à l'ordonnance.
-      operationId: getOrdonnanceById
-      parameters:
-        - $ref: '#/components/parameters/ordonnanceId'
-      responses:
-        '200':
-          description: Ordonnance avec ses lignes
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OrdonnanceAvecLignes'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Ordonnance' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+          description: Patient jamais consulté par ce praticien, ou patient demandant les ordonnances d'un autre
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: AccessDeniedException, message: "Accès refusé : aucune consultation antérieure avec ce patient", statusCode: 403, path: /ordonnances, timestamp: "2026-11-26T10:00:00Z" }
 
-  /ordonnances/{ordonnanceId}/lignes:
+  /ordonnances/{id}:
+    get:
+      tags: [Ordonnances]
+      summary: Détail d'une ordonnance avec ses lignes
+      parameters:
+        - { $ref: '#/components/parameters/ordonnanceId' }
+      responses:
+        '200':
+          description: Ordonnance et lignes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrdonnanceAvecLignes' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /ordonnances/{id}/lignes:
+    parameters:
+      - { $ref: '#/components/parameters/ordonnanceId' }
+    get:
+      tags: [Lignes de prescription]
+      summary: Lignes de prescription d'une ordonnance
+      responses:
+        '200':
+          description: Lignes
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/LignePrescription' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
     post:
-      tags:
-        - Lignes de Prescription
-      summary: Ajouter une ligne à une ordonnance
+      tags: [Lignes de prescription]
+      summary: Ajouter une ligne de prescription
       description: |
-        Ajoute une nouvelle ligne de prescription à une ordonnance.
-        Seul le praticien qui a créé l'ordonnance peut ajouter des lignes.
-        L'ordonnance ne doit pas être expirée.
-      operationId: createLignePrescription
-      parameters:
-        - $ref: '#/components/parameters/ordonnanceId'
+        Refusé si le patient est allergique au médicament (comparaison sur le nom et la substance active,
+        accents et casse ignorés : une allergie « Amoxicilline » bloque aussi « Augmentin »).
+        Une durée de plus de 90 jours est acceptée mais déclenche une alerte métier CloudWatch.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/LignePrescriptionInput'
+            schema: { $ref: '#/components/schemas/LigneRequest' }
+            examples:
+              normale: { summary: Ligne standard, value: { medicamentId: "3d1c...", posologie: "1 g toutes les 6h si douleur", duree: 5, instructions: "Ne pas dépasser 4 g par jour" } }
+              longue: { summary: "Plus de 90 jours (alerte CloudWatch)", value: { medicamentId: "7b2a...", posologie: "1 sachet par jour", duree: 120 } }
       responses:
         '201':
-          description: Ligne de prescription créée
+          description: Ligne ajoutée
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/LignePrescription'
+              schema: { $ref: '#/components/schemas/LignePrescription' }
         '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
+          description: Durée < 1 jour, posologie manquante
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ValidationException, message: "duree : doit être d'au moins 1 jour", statusCode: 400, path: /ordonnances/o1/lignes, timestamp: "2026-11-26T10:00:00Z" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotAuthor' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Conflit
+          description: Allergie connue ou ordonnance expirée
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          examples:
-            expired:
-              value:
-                error: "PrescriptionExpiredException"
-                message: "L'ordonnance est expirée"
-                statusCode: 409
-            allergy:
-              value:
-                error: "AllergyConflictException"
-                message: "Conflit avec une allergie du patient"
-                statusCode: 409
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                AllergyConflict:
+                  summary: Allergie connue (loggée dans CloudWatch)
+                  value: { error: AllergyConflictException, message: "Le patient est allergique à Augmentin (Amoxicilline + acide clavulanique)", statusCode: 409, path: /ordonnances/o1/lignes, timestamp: "2026-11-26T10:00:00Z" }
+                Expired:
+                  summary: Ordonnance expirée
+                  value: { error: PrescriptionExpiredException, message: "L'ordonnance a expiré le 2026-10-01 et ne peut plus être modifiée", statusCode: 409, path: /ordonnances/o1/lignes, timestamp: "2026-11-26T10:00:00Z" }
 
-    get:
-      tags:
-        - Lignes de Prescription
-      summary: Lister les lignes d'une ordonnance
-      description: |
-        Retourne la liste des lignes de prescription d'une ordonnance.
-        Seuls le patient ou le praticien concerné peuvent accéder aux lignes.
-      operationId: listLignesPrescription
-      parameters:
-        - $ref: '#/components/parameters/ordonnanceId'
-      responses:
-        '200':
-          description: Liste des lignes de prescription
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/LignePrescription'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
+  /ordonnances/{id}/lignes/{ligneId}:
     delete:
-      tags:
-        - Lignes de Prescription
-      summary: Supprimer une ligne d'une ordonnance
-      description: |
-        Supprime une ligne de prescription d'une ordonnance.
-        Seul le praticien qui a créé l'ordonnance peut supprimer des lignes.
-      operationId: deleteLignePrescription
+      tags: [Lignes de prescription]
+      summary: Retirer une ligne de prescription
       parameters:
-        - $ref: '#/components/parameters/ordonnanceId'
-        - name: ligneId
-          in: path
-          required: true
-          description: ID de la ligne de prescription
-          schema:
-            type: string
-            format: uuid
+        - { $ref: '#/components/parameters/ordonnanceId' }
+        - { name: ligneId, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
-        '204':
-          description: Ligne supprimée avec succès
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+        '204': { description: Ligne retirée }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/NotAuthor' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Ordonnance expirée
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: PrescriptionExpiredException, message: "L'ordonnance a expiré le 2026-10-01 et ne peut plus être modifiée", statusCode: 409, path: /ordonnances/o1/lignes/l1, timestamp: "2026-11-26T10:00:00Z" }
 
   /medicaments:
     get:
-      tags:
-        - Médicaments
-      summary: Lister les médicaments
-      description: |
-        Retourne la liste des médicaments avec pagination et filtrage.
-        Accessible à tous les utilisateurs authentifiés.
-      operationId: listMedicaments
+      tags: [Médicaments]
+      summary: Lister les médicaments disponibles (paginé, filtrable)
       parameters:
-        - name: forme
-          in: query
-          description: Filtrer par forme de médicament
-          required: false
-          schema:
-            type: string
-            enum: [COMPRIME, SIROP, INJECTION, AUTRE]
-        - name: search
-          in: query
-          description: Recherche par nom ou substance active
-          required: false
-          schema:
-            type: string
-        - $ref: '#/components/parameters/page'
-        - $ref: '#/components/parameters/limit'
+        - { name: forme, in: query, schema: { $ref: '#/components/schemas/Forme' } }
+        - { name: search, in: query, description: Recherche dans le nom et la substance active, schema: { type: string }, example: amox }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
       responses:
         '200':
-          description: Liste des médicaments
+          description: Page de médicaments triés par nom
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MedicamentList'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Medicament' } }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
     post:
-      tags:
-        - Médicaments
-      summary: Créer un nouveau médicament
-      description: |
-        Crée un nouveau médicament dans la base de données.
-        Réservé aux administrateurs uniquement.
-      operationId: createMedicament
+      tags: [Médicaments]
+      summary: Ajouter un médicament au référentiel (praticien)
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: '#/components/schemas/MedicamentInput'
+            schema: { $ref: '#/components/schemas/MedicamentRequest' }
+            example: { nom: "Spasfon 80 mg", substanceActive: Phloroglucinol, forme: COMPRIME, description: Antispasmodique }
       responses:
         '201':
-          description: Médicament créé avec succès
+          description: Médicament créé
           content:
             application/json:
-              schema:
-                $ref: '#/components/schemas/Medicament'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
+              schema: { $ref: '#/components/schemas/Medicament' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Nom déjà présent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: ConflictException, message: "Le médicament « Doliprane 1000 mg » existe déjà", statusCode: 409, path: /medicaments, timestamp: "2026-11-26T10:00:00Z" }
 
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: Token JWT pour l'authentification
-
-  schemas:
-    Ordonnance:
-      type: object
-      properties:
-        ordonnanceId:
-          type: string
-          format: uuid
-          example: "ordonnance-uuid-1234"
-          description: ID unique de l'ordonnance
-        compteRenduId:
-          type: string
-          format: uuid
-          example: "compte-rendu-uuid-1234"
-          description: ID du compte rendu associé
-        patientId:
-          type: string
-          format: uuid
-          example: "patient-uuid-1234"
-          description: ID du patient
-        praticienId:
-          type: string
-          format: uuid
-          example: "praticien-uuid-1234"
-          description: ID du praticien
-        dateEmission:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-          description: Date d'émission de l'ordonnance
-        dateValidite:
-          type: string
-          format: date-time
-          example: "2024-02-25T00:00:00Z"
-          description: Date de validité de l'ordonnance (par défaut 3 mois)
-        statut:
-          type: string
-          enum: [ACTIVE, EXPIREE]
-          example: "ACTIVE"
-          description: Statut de l'ordonnance
-        createdAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-        updatedAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-
-    OrdonnanceAvecLignes:
-      type: object
-      allOf:
-        - $ref: '#/components/schemas/Ordonnance'
-        - type: object
-          properties:
-            lignes:
-              type: array
-              items:
-                $ref: '#/components/schemas/LignePrescription'
-
-    OrdonnanceInput:
-      type: object
-      required:
-        - compteRenduId
-      properties:
-        compteRenduId:
-          type: string
-          format: uuid
-          example: "compte-rendu-uuid-1234"
-          description: ID du compte rendu finalisé
-
-    OrdonnanceList:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Ordonnance'
-        count:
-          type: integer
-          example: 10
-          description: Nombre total d'ordonnances
-        page:
-          type: integer
-          example: 1
-          description: Numéro de la page
-        limit:
-          type: integer
-          example: 10
-          description: Nombre d'éléments par page
-
-    LignePrescription:
-      type: object
-      properties:
-        ligneId:
-          type: string
-          format: uuid
-          example: "ligne-uuid-1234"
-          description: ID unique de la ligne
-        ordonnanceId:
-          type: string
-          format: uuid
-          example: "ordonnance-uuid-1234"
-          description: ID de l'ordonnance
-        medicamentId:
-          type: string
-          format: uuid
-          example: "medicament-uuid-1234"
-          description: ID du médicament
-        posologie:
-          type: string
-          maxLength: 200
-          example: "1 comprimé par jour"
-          description: Posologie du médicament
-        duree:
-          type: integer
-          minimum: 0
-          maximum: 90
-          example: 30
-          description: Durée du traitement en jours (max 90 jours)
-        instructions:
-          type: string
-          maxLength: 500
-          example: "À prendre le matin à jeun"
-          description: Instructions spéciales
-        createdAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-        updatedAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-
-    LignePrescriptionInput:
-      type: object
-      required:
-        - medicamentId
-        - posologie
-      properties:
-        medicamentId:
-          type: string
-          format: uuid
-          example: "medicament-uuid-1234"
-        posologie:
-          type: string
-          maxLength: 200
-          example: "1 comprimé par jour"
-        duree:
-          type: integer
-          minimum: 1
-          maximum: 90
-          example: 30
-        instructions:
-          type: string
-          maxLength: 500
-          example: "À prendre le matin à jeun"
-
-    Medicament:
-      type: object
-      properties:
-        medicamentId:
-          type: string
-          format: uuid
-          example: "medicament-uuid-1234"
-          description: ID unique du médicament
-        nom:
-          type: string
-          maxLength: 200
-          example: "Paracétamol 500mg"
-          description: Nom du médicament
-        substanceActive:
-          type: string
-          maxLength: 200
-          example: "Paracétamol"
-          description: Substance active principale
-        forme:
-          type: string
-          enum: [COMPRIME, SIROP, INJECTION, AUTRE]
-          example: "COMPRIME"
-          description: Forme du médicament
-        description:
-          type: string
-          maxLength: 1000
-          example: "Antalgique et antipyrétique"
-          description: Description du médicament
-        createdAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-        updatedAt:
-          type: string
-          format: date-time
-          example: "2023-11-25T10:00:00Z"
-
-    MedicamentInput:
-      type: object
-      required:
-        - nom
-      properties:
-        nom:
-          type: string
-          maxLength: 200
-          example: "Paracétamol 500mg"
-        substanceActive:
-          type: string
-          maxLength: 200
-          example: "Paracétamol"
-        forme:
-          type: string
-          enum: [COMPRIME, SIROP, INJECTION, AUTRE]
-          default: AUTRE
-          example: "COMPRIME"
-        description:
-          type: string
-          maxLength: 1000
-          example: "Antalgique et antipyrétique"
-
-    MedicamentList:
-      type: object
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/Medicament'
-        count:
-          type: integer
-          example: 100
-          description: Nombre total de médicaments
-        page:
-          type: integer
-          example: 1
-          description: Numéro de la page
-        limit:
-          type: integer
-          example: 10
-          description: Nombre d'éléments par page
-
-    Error:
-      type: object
-      required:
-        - error
-        - message
-        - statusCode
-      properties:
-        error:
-          type: string
-          example: "NotFound"
-        message:
-          type: string
-          example: "Ressource non trouvée"
-        statusCode:
-          type: integer
-          example: 404
-
-  responses:
-    BadRequest:
-      description: Requête invalide
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-    Unauthorized:
-      description: Non autorisé
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-    Forbidden:
-      description: Accès interdit
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-    NotFound:
-      description: Ressource non trouvée
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
-
-    InternalServerError:
-      description: Erreur interne du serveur
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
 
   parameters:
     ordonnanceId:
-      name: ordonnanceId
+      name: id
       in: path
       required: true
-      description: ID de l'ordonnance
-      schema:
-        type: string
-        format: uuid
+      schema: { type: string, format: uuid }
 
-    page:
-      name: page
-      in: query
-      description: Numéro de la page
-      required: false
-      schema:
-        type: integer
-        minimum: 1
-        default: 1
+  responses:
+    ValidationError:
+      description: Requête invalide
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: ValidationException, message: "forme invalide (valeurs possibles : [COMPRIME, SIROP, INJECTION, AUTRE])", statusCode: 400, path: /medicaments, timestamp: "2026-11-26T10:00:00Z" }
+    Unauthorized:
+      description: Token JWT manquant, expiré ou invalide
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: UnauthorizedException, message: "Token JWT manquant ou invalide", statusCode: 401, path: /ordonnances, timestamp: "2026-11-26T10:00:00Z" }
+    Forbidden:
+      description: Accès non autorisé
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: ForbiddenException, message: "Vous n'avez pas accès à cette ordonnance", statusCode: 403, path: /ordonnances/o1, timestamp: "2026-11-26T10:00:00Z" }
+    NotAuthor:
+      description: Seul le praticien auteur peut modifier l'ordonnance
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: ForbiddenException, message: "Seul le praticien auteur de l'ordonnance peut la modifier", statusCode: 403, path: /ordonnances/o1/lignes, timestamp: "2026-11-26T10:00:00Z" }
+    NotFound:
+      description: Ressource introuvable
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: NotFoundException, message: "Ordonnance o1 non trouvée", statusCode: 404, path: /ordonnances/o1, timestamp: "2026-11-26T10:00:00Z" }
 
-    limit:
-      name: limit
-      in: query
-      description: Nombre d'éléments par page
-      required: false
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 100
-        default: 10
+  schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string, description: Nom de l'exception métier }
+        message: { type: string }
+        statusCode: { type: integer }
+        path: { type: string }
+        timestamp: { type: string, format: date-time }
+    Page:
+      type: object
+      properties:
+        count: { type: integer, description: Nombre total d'éléments }
+        page: { type: integer }
+        limit: { type: integer }
+    Forme:
+      type: string
+      enum: [COMPRIME, SIROP, INJECTION, AUTRE]
+    OrdonnanceRequest:
+      type: object
+      required: [rdvId]
+      properties:
+        rdvId: { type: string, format: uuid, description: Rendez-vous TERMINE dont le compte rendu est finalisé }
+    Ordonnance:
+      type: object
+      properties:
+        ordonnanceId: { type: string, format: uuid }
+        rdvId: { type: string, format: uuid }
+        compteRenduId: { type: string, format: uuid }
+        patientId: { type: string, format: uuid }
+        patientNom: { type: string }
+        praticienId: { type: string, format: uuid }
+        praticienNom: { type: string }
+        dateEmission: { type: string, format: date-time }
+        dateValidite: { type: string, example: "2027-02-26T23:59:59", description: "Émission + 3 mois" }
+        statut: { type: string, enum: [ACTIVE, EXPIREE] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    OrdonnanceAvecLignes:
+      type: object
+      properties:
+        ordonnance: { $ref: '#/components/schemas/Ordonnance' }
+        lignes: { type: array, items: { $ref: '#/components/schemas/LignePrescription' } }
+    LigneRequest:
+      type: object
+      required: [medicamentId, posologie, duree]
+      properties:
+        medicamentId: { type: string, format: uuid }
+        posologie: { type: string }
+        duree: { type: integer, minimum: 1, description: Durée du traitement en jours }
+        instructions: { type: string }
+    LignePrescription:
+      type: object
+      properties:
+        ordonnanceId: { type: string, format: uuid }
+        ligneId: { type: string, format: uuid }
+        medicamentId: { type: string, format: uuid }
+        medicamentNom: { type: string, example: Doliprane 1000 mg }
+        posologie: { type: string, example: "1 g toutes les 6h si douleur" }
+        duree: { type: integer, example: 5 }
+        instructions: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    MedicamentRequest:
+      type: object
+      required: [nom, forme]
+      properties:
+        nom: { type: string }
+        substanceActive: { type: string }
+        forme: { $ref: '#/components/schemas/Forme' }
+        description: { type: string }
+    Medicament:
+      type: object
+      properties:
+        medicamentId: { type: string, format: uuid }
+        nom: { type: string, example: Doliprane 1000 mg }
+        substanceActive: { type: string, example: Paracetamol }
+        forme: { $ref: '#/components/schemas/Forme' }
+        description: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }

@@ -3,7 +3,7 @@
  * Contient le header, la navigation et le footer
  */
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../services/auth';
 import { Role } from '../services/auth';
 
@@ -27,25 +27,27 @@ function Layout({ children }) {
       <header className="header">
         <div className="header-content">
           <div className="logo">
-            <Link to="/">HealthTrack</Link>
+            <Link to="/">Health<span className="logo-accent">Track</span></Link>
           </div>
           
           {isAuthenticated() && (
             <nav className="navigation">
-              <Link to="/">Accueil</Link>
-              <Link to="/profile">Mon profil</Link>
+              <NavLink to="/" end>Accueil</NavLink>
+              <NavLink to="/profile">Mon profil</NavLink>
               
               {user?.type === Role.PRATICIEN && (
                 <>
-                  <Link to="/agenda">Mon agenda</Link>
-                  <Link to="/disponibilites">Disponibilités</Link>
+                  <NavLink to="/agenda">Mon agenda</NavLink>
+                  <NavLink to="/disponibilites">Disponibilités</NavLink>
                 </>
               )}
               
               {user?.type === Role.PATIENT && (
                 <>
-                  <Link to="/prise-rdv">Prendre un RDV</Link>
-                  <Link to="/dossier-medical">Mon dossier médical</Link>
+                  <NavLink to="/prise-rdv">Prendre un RDV</NavLink>
+                  <NavLink to="/mes-rendezvous">Mes rendez-vous</NavLink>
+                  <NavLink to="/mes-ordonnances">Mes ordonnances</NavLink>
+                  <NavLink to="/dossier-medical">Mon dossier</NavLink>
                 </>
               )}
             </nav>

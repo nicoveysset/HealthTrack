@@ -9,11 +9,19 @@
   </parent>
   <artifactId>healthtrack-ordonnances</artifactId>
   <name>HealthTrack API Ordonnances</name>
+  <properties>
+    <openapi.file>openapi-ordonnances.yaml</openapi.file>
+  </properties>
+
   <build>
     <plugins>
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
       </plugin>
     </plugins>
   </build>

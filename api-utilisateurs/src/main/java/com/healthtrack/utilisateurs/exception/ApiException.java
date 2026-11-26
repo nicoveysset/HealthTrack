@@ -1,5 +1,10 @@
 package com.healthtrack.utilisateurs.exception;
 
+/**
+ * Exception métier de base : chaque exception nommée du sujet en hérite
+ * et porte son code HTTP. Le GlobalExceptionHandler la transforme en réponse JSON
+ * { "error": "NomDeLException", "message": "...", "statusCode": 409 }.
+ */
 public class ApiException extends RuntimeException {
     private final String error;
     private final int statusCode;

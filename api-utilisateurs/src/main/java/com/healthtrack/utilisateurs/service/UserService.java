@@ -2,154 +2,228 @@ package com.healthtrack.utilisateurs.service;
 
 import com.healthtrack.utilisateurs.config.JwtService;
 import com.healthtrack.utilisateurs.dto.*;
-import com.healthtrack.utilisateurs.exception.ApiException;
+import com.healthtrack.utilisateurs.exception.*;
 import com.healthtrack.utilisateurs.model.*;
 import com.healthtrack.utilisateurs.repository.UserRepository;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
-import java.util.UUID;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.*;
 
+/**
+ * Règles métier de l'API Utilisateurs.
+ * <ul>
+ *   <li>Email déjà utilisé → {@link EmailAlreadyUsedException}</li>
+ *   <li>Médecin traitant non généraliste → {@link InvalidSpecialityException}</li>
+ *   <li>Médecin traitant INACTIF → {@link PractitionerNotAvailableException}</li>
+ * </ul>
+ */
 @Service
-@Transactional
 public class UserService {
+
+    private static final Logger log = LoggerFactory.getLogger(UserService.class);
+    private static final int MAX_LIMIT = 100;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
+    private final Clock clock;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService) {
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService, Clock clock) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
+        this.clock = clock;
     }
 
+    // ========== Inscription / connexion ==========
+
     public AuthResponse register(RegisterRequest req) {
-        UserType type;
-        try {
-            type = req.getUserType();
-        } catch (IllegalArgumentException e) {
-            throw new ApiException("ValidationError", "type doit être PRATICIEN ou PATIENT", 400);
-        }
-
-        if (type == UserType.PRATICIEN) {
-            if (req.specialite() == null || req.specialite().isBlank())
-                throw new ApiException("ValidationError", "specialite est requis pour un praticien", 400);
-            if (req.rpps() == null || req.rpps().isBlank())
-                throw new ApiException("ValidationError", "rpps est requis pour un praticien", 400);
-        }
-        if (type == UserType.PATIENT) {
-            if (req.dateNaissance() == null || req.dateNaissance().isBlank())
-                throw new ApiException("ValidationError", "dateNaissance est requis pour un patient", 400);
-            if (req.nss() == null || req.nss().isBlank())
-                throw new ApiException("ValidationError", "nss est requis pour un patient", 400);
-        }
-
-        if (userRepository.existsByEmail(req.email()))
-            throw new ApiException("EmailAlreadyUsedException", "Un utilisateur avec cet email existe déjà", 409);
+        UserType type = parseEnum(UserType.class, req.type(), "type");
+        String email = req.email().trim().toLowerCase(Locale.ROOT);
 
         User user = new User();
-        user.setUserId(UUID.randomUUID().toString());
-        user.setEmail(req.email());
-        user.setPasswordHash(passwordEncoder.encode(req.password()));
-        user.setType(type);
-        user.setFirstName(req.firstName());
-        user.setLastName(req.lastName());
-        user.setName(req.firstName() + " " + req.lastName());
-
         if (type == UserType.PRATICIEN) {
-            user.setSpecialite(req.specialite());
-            user.setRpps(req.rpps());
-            user.setStatut(PraticienStatut.ACTIF);
+            user.setSpecialite(parseEnum(Specialite.class, required(req.specialite(), "specialite"), "specialite").name());
+            user.setRpps(required(req.rpps(), "rpps"));
+            user.setStatut(PraticienStatut.ACTIF.name());
         } else {
-            user.setDateNaissance(req.dateNaissance());
-            user.setNss(req.nss());
+            user.setDateNaissance(validateDateNaissance(required(req.dateNaissance(), "dateNaissance")));
+            user.setNss(required(req.nss(), "nss"));
         }
 
+        if (userRepository.existsByEmail(email))
+            throw new EmailAlreadyUsedException("Un utilisateur avec l'email " + email + " existe déjà");
+
+        String now = Instant.now(clock).toString();
+        user.setUserId(UUID.randomUUID().toString());
+        user.setEmail(email);
+        user.setPasswordHash(passwordEncoder.encode(req.password()));
+        user.setType(type.name());
+        user.setFirstName(req.firstName().trim());
+        user.setLastName(req.lastName().trim());
+        user.setName(user.getFirstName() + " " + user.getLastName());
+        user.setCreatedAt(now);
+        user.setUpdatedAt(now);
+
         User saved = userRepository.save(user);
-        String token = jwtService.generateToken(saved.getUserId(), saved.getEmail(), saved.getType().name(), saved.getName());
-        return new AuthResponse(UserResponse.from(saved), token);
+        log.info("{\"event\":\"USER_REGISTERED\",\"userId\":\"{}\",\"type\":\"{}\"}", saved.getUserId(), saved.getType());
+        return new AuthResponse(UserResponse.from(saved), token(saved));
     }
 
     public AuthResponse login(LoginRequest req) {
-        User user = userRepository.findByEmail(req.email())
-            .orElseThrow(() -> new ApiException("InvalidCredentials", "Email ou mot de passe incorrect", 401));
+        User user = userRepository.findByEmail(req.email().trim().toLowerCase(Locale.ROOT))
+            .orElseThrow(InvalidCredentialsException::new);
         if (!passwordEncoder.matches(req.password(), user.getPasswordHash()))
-            throw new ApiException("InvalidCredentials", "Email ou mot de passe incorrect", 401);
-        String token = jwtService.generateToken(user.getUserId(), user.getEmail(), user.getType().name(), user.getName());
-        return new AuthResponse(UserResponse.from(user), token);
+            throw new InvalidCredentialsException();
+        log.info("{\"event\":\"USER_LOGIN\",\"userId\":\"{}\"}", user.getUserId());
+        return new AuthResponse(UserResponse.from(user), token(user));
     }
 
-    @Transactional(readOnly = true)
+    private String token(User u) {
+        return jwtService.generateToken(u.getUserId(), u.getEmail(), u.getType(), u.getName());
+    }
+
+    // ========== Profil ==========
+
     public UserResponse getProfile(String userId) {
-        User user = userRepository.findById(userId)
-            .orElseThrow(() -> new ApiException("NotFound", "Utilisateur non trouvé", 404));
-        return UserResponse.from(user);
+        return UserResponse.from(findUser(userId));
+    }
+
+    /**
+     * Consultation du profil d'un autre utilisateur :
+     * un praticien est visible par tous ; un patient n'est visible que par les praticiens.
+     */
+    public UserResponse getUser(String targetId, String currentUserId, String currentUserType) {
+        User target = findUser(targetId);
+        boolean self = target.getUserId().equals(currentUserId);
+        if (!self && "PATIENT".equals(target.getType()) && !"PRATICIEN".equals(currentUserType))
+            throw new ForbiddenException("Seul un praticien peut consulter le profil d'un patient");
+        return UserResponse.from(target);
     }
 
     public UserResponse updateProfile(String userId, UpdateProfileRequest req) {
-        User user = userRepository.findById(userId)
-            .orElseThrow(() -> new ApiException("NotFound", "Utilisateur non trouvé", 404));
-        if (req.firstName() != null) user.setFirstName(req.firstName());
-        if (req.lastName() != null) user.setLastName(req.lastName());
-        if (req.name() != null) user.setName(req.name());
-        if (req.dateNaissance() != null) user.setDateNaissance(req.dateNaissance());
-        if (req.nss() != null) user.setNss(req.nss());
-        if (req.specialite() != null) user.setSpecialite(req.specialite());
-        if (req.rpps() != null) user.setRpps(req.rpps());
-        if (req.statut() != null && user.getType() == UserType.PRATICIEN) {
-            user.setStatut(PraticienStatut.valueOf(req.statut()));
+        User user = findUser(userId);
+        Map<String, Object> updates = new HashMap<>();
+        if (notBlank(req.firstName())) updates.put("firstName", req.firstName().trim());
+        if (notBlank(req.lastName())) updates.put("lastName", req.lastName().trim());
+
+        boolean praticien = "PRATICIEN".equals(user.getType());
+        if (!praticien && (req.specialite() != null || req.rpps() != null))
+            throw new ValidationException("specialite et rpps ne concernent que les praticiens");
+        if (praticien && (req.dateNaissance() != null || req.nss() != null))
+            throw new ValidationException("dateNaissance et nss ne concernent que les patients");
+        if (req.statut() != null && !req.statut().equals(user.getStatut()))
+            throw new ValidationException("Le statut se modifie via PATCH /praticiens/me/statut");
+
+        if (praticien) {
+            if (notBlank(req.specialite()))
+                updates.put("specialite", parseEnum(Specialite.class, req.specialite(), "specialite").name());
+            if (notBlank(req.rpps())) updates.put("rpps", req.rpps().trim());
+        } else {
+            if (notBlank(req.dateNaissance())) updates.put("dateNaissance", validateDateNaissance(req.dateNaissance()));
+            if (notBlank(req.nss())) updates.put("nss", req.nss().trim());
         }
-        return UserResponse.from(userRepository.save(user));
+        String first = (String) updates.getOrDefault("firstName", user.getFirstName());
+        String last = (String) updates.getOrDefault("lastName", user.getLastName());
+        updates.put("name", first + " " + last);
+
+        User updated = userRepository.update(userId, updates);
+        log.info("{\"event\":\"PROFILE_UPDATED\",\"userId\":\"{}\",\"fields\":\"{}\"}", userId, updates.keySet());
+        return UserResponse.from(updated);
     }
+
+    // ========== Médecin traitant ==========
 
     public UserResponse setMedecinTraitant(String patientId, String medecinTraitantId) {
-        User patient = userRepository.findById(patientId)
-            .orElseThrow(() -> new ApiException("NotFound", "Patient non trouvé", 404));
-        if (patient.getType() != UserType.PATIENT)
-            throw new ApiException("Forbidden", "Seul un patient peut désigner son médecin traitant", 403);
+        User patient = findUser(patientId);
+        if (!"PATIENT".equals(patient.getType()))
+            throw new ForbiddenException("Seul un patient peut désigner son médecin traitant");
         User medecin = userRepository.findById(medecinTraitantId)
-            .orElseThrow(() -> new ApiException("NotFound", "Praticien non trouvé", 404));
-        if (medecin.getType() != UserType.PRATICIEN)
-            throw new ApiException("NotFound", "Praticien non trouvé", 404);
-        if (medecin.getStatut() != PraticienStatut.ACTIF)
-            throw new ApiException("PractitionerNotAvailableException", "Le praticien n'est pas disponible", 409);
-        patient.setMedecinTraitantId(medecinTraitantId);
-        return UserResponse.from(userRepository.save(patient));
+            .filter(u -> "PRATICIEN".equals(u.getType()))
+            .orElseThrow(() -> new NotFoundException("Praticien " + medecinTraitantId + " non trouvé"));
+
+        if (!Specialite.GENERALISTE.name().equals(medecin.getSpecialite()))
+            throw new InvalidSpecialityException("Le médecin traitant doit être GENERALISTE (spécialité actuelle : "
+                + medecin.getSpecialite() + ")");
+        // Le sujet ne bloque que le statut INACTIF : un médecin en congé reste désignable.
+        if (PraticienStatut.INACTIF.name().equals(medecin.getStatut()))
+            throw new PractitionerNotAvailableException("Le praticien est INACTIF et ne peut pas être désigné médecin traitant");
+
+        User updated = userRepository.update(patientId, Map.of("medecinTraitantId", medecinTraitantId));
+        log.info("{\"event\":\"MEDECIN_TRAITANT_SET\",\"patientId\":\"{}\",\"praticienId\":\"{}\"}", patientId, medecinTraitantId);
+        return UserResponse.from(updated);
     }
+
+    // ========== Statut praticien ==========
 
     public UserResponse updatePraticienStatut(String praticienId, String statut) {
-        User praticien = userRepository.findById(praticienId)
-            .orElseThrow(() -> new ApiException("NotFound", "Praticien non trouvé", 404));
-        if (praticien.getType() != UserType.PRATICIEN)
-            throw new ApiException("Forbidden", "Seul un praticien peut modifier son statut", 403);
-        try {
-            praticien.setStatut(PraticienStatut.valueOf(statut));
-        } catch (IllegalArgumentException e) {
-            throw new ApiException("ValidationError", "statut doit être ACTIF, EN_CONGE ou INACTIF", 400);
-        }
-        return UserResponse.from(userRepository.save(praticien));
+        User praticien = findUser(praticienId);
+        if (!"PRATICIEN".equals(praticien.getType()))
+            throw new ForbiddenException("Seul un praticien peut modifier son statut");
+        PraticienStatut nouveau = parseEnum(PraticienStatut.class, statut, "statut");
+        User updated = userRepository.update(praticienId, Map.of("statut", nouveau.name()));
+        log.info("{\"event\":\"PRATICIEN_STATUT_CHANGED\",\"praticienId\":\"{}\",\"from\":\"{}\",\"to\":\"{}\"}",
+            praticienId, praticien.getStatut(), nouveau);
+        return UserResponse.from(updated);
     }
 
-    @Transactional(readOnly = true)
+    // ========== Recherche de praticiens ==========
+
     public PagedResponse<UserResponse> listPraticiens(String specialite, String statut, int page, int limit) {
-        PageRequest pr = PageRequest.of(page - 1, limit);
-        Page<User> result;
-        if (specialite != null && statut != null) {
-            result = userRepository.findByTypeAndSpecialiteContainingIgnoreCaseAndStatut(
-                UserType.PRATICIEN, specialite, PraticienStatut.valueOf(statut), pr);
-        } else if (specialite != null) {
-            result = userRepository.findByTypeAndSpecialiteContainingIgnoreCase(UserType.PRATICIEN, specialite, pr);
-        } else if (statut != null) {
-            result = userRepository.findByTypeAndStatut(UserType.PRATICIEN, PraticienStatut.valueOf(statut), pr);
-        } else {
-            result = userRepository.findByType(UserType.PRATICIEN, pr);
+        validatePagination(page, limit);
+        String spe = notBlank(specialite) ? parseEnum(Specialite.class, specialite, "specialite").name() : null;
+        String sta = notBlank(statut) ? parseEnum(PraticienStatut.class, statut, "statut").name() : null;
+        List<UserResponse> all = userRepository.findPraticiens(spe, sta).stream()
+            .sorted(Comparator.comparing(User::getLastName, Comparator.nullsLast(String::compareToIgnoreCase)))
+            .map(UserResponse::from)
+            .toList();
+        int from = Math.min((page - 1) * limit, all.size());
+        int to = Math.min(from + limit, all.size());
+        return new PagedResponse<>(all.subList(from, to), all.size(), page, limit);
+    }
+
+    // ========== Utilitaires ==========
+
+    private User findUser(String id) {
+        return userRepository.findById(id).orElseThrow(() -> new NotFoundException("Utilisateur " + id + " non trouvé"));
+    }
+
+    static void validatePagination(int page, int limit) {
+        if (page < 1) throw new ValidationException("page doit être >= 1");
+        if (limit < 1 || limit > MAX_LIMIT) throw new ValidationException("limit doit être compris entre 1 et " + MAX_LIMIT);
+    }
+
+    private String validateDateNaissance(String value) {
+        try {
+            LocalDate d = LocalDate.parse(value.trim());
+            if (d.isAfter(LocalDate.now(clock))) throw new ValidationException("dateNaissance ne peut pas être dans le futur");
+            return d.toString();
+        } catch (DateTimeParseException e) {
+            throw new ValidationException("dateNaissance doit être au format YYYY-MM-DD");
         }
-        return new PagedResponse<>(
-            result.getContent().stream().map(UserResponse::from).toList(),
-            result.getTotalElements(), page, limit);
+    }
+
+    private static String required(String value, String field) {
+        if (!notBlank(value)) throw new ValidationException(field + " est requis");
+        return value.trim();
+    }
+
+    private static boolean notBlank(String s) {
+        return s != null && !s.isBlank();
+    }
+
+    static <E extends Enum<E>> E parseEnum(Class<E> type, String value, String field) {
+        try {
+            return Enum.valueOf(type, value.trim().toUpperCase(Locale.ROOT));
+        } catch (RuntimeException e) {
+            throw new ValidationException(field + " invalide (valeurs possibles : " + Arrays.toString(type.getEnumConstants()) + ")");
+        }
     }
 }

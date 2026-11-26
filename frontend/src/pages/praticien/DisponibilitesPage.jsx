@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../services/auth';
 import { API_URLS } from '../../services/api';
+import { apiError, formatDateTime } from '../../utils/format';
 import axios from 'axios';
 
 const JOURS = ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI', 'DIMANCHE'];
@@ -22,6 +23,7 @@ function DisponibilitesPage() {
   const [newDispo, setNewDispo] = useState({ jourSemaine: 'LUNDI', heureDebut: '09:00', heureFin: '17:00' });
   // Formulaire nouvelle indispo
   const [newIndispo, setNewIndispo] = useState({ dateDebut: '', dateFin: '', motif: '' });
+  const [dirty, setDirty] = useState(false);
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -36,7 +38,7 @@ function DisponibilitesPage() {
       setIndisponibilites(Array.isArray(indisposRes.data) ? indisposRes.data : (indisposRes.data.items || []));
       setError(null);
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur de chargement');
+      setError(apiError(err, 'Erreur de chargement'));
     } finally {
       setLoading(false);
     }
@@ -53,24 +55,28 @@ function DisponibilitesPage() {
     try {
       await axios.put(
         `${API_URLS.rdv}/praticiens/me/disponibilites`,
-        { disponibilites: disponibilites },
+        { disponibilites: disponibilites.map(({ jourSemaine, heureDebut, heureFin }) => ({ jourSemaine, heureDebut, heureFin })) },
         { headers }
       );
       setSuccess('Disponibilités enregistrées !');
+      setDirty(false);
+      fetchData();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur');
+      setError(apiError(err));
     } finally {
       setLoading(false);
     }
   };
 
   const handleAddDispo = () => {
-    setDisponibilites([...disponibilites, { ...newDispo, disponibiliteId: `tmp-${Date.now()}` }]);
+    setDisponibilites([...disponibilites, { ...newDispo, dispoId: `tmp-${Date.now()}` }]);
+    setDirty(true);
     setNewDispo({ jourSemaine: 'LUNDI', heureDebut: '09:00', heureFin: '17:00' });
   };
 
   const handleRemoveDispo = (id) => {
-    setDisponibilites(disponibilites.filter(d => d.disponibiliteId !== id));
+    setDisponibilites(disponibilites.filter(d => d.dispoId !== id));
+    setDirty(true);
   };
 
   const handleAddIndispo = async (e) => {
@@ -79,8 +85,8 @@ function DisponibilitesPage() {
       await axios.post(
         `${API_URLS.rdv}/praticiens/me/indisponibilites`,
         {
-          dateDebut: `${newIndispo.dateDebut}T00:00:00Z`,
-          dateFin: `${newIndispo.dateFin}T23:59:59Z`,
+          dateDebut: newIndispo.dateDebut,
+          dateFin: newIndispo.dateFin,
           motif: newIndispo.motif
         },
         { headers }
@@ -89,17 +95,17 @@ function DisponibilitesPage() {
       setSuccess('Indisponibilité ajoutée !');
       fetchData();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur');
+      setError(apiError(err));
     }
   };
 
   const handleDeleteIndispo = async (indispoId) => {
     if (!window.confirm('Supprimer cette indisponibilité ?')) return;
     try {
-      await axios.delete(`${API_URLS.rdv}/indisponibilites/${indispoId}`, { headers });
+      await axios.delete(`${API_URLS.rdv}/praticiens/me/indisponibilites/${indispoId}`, { headers });
       fetchData();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur');
+      setError(apiError(err));
     }
   };
 
@@ -137,10 +143,10 @@ function DisponibilitesPage() {
 
           <ul className="items-list">
             {disponibilites.map(d => (
-              <li key={d.disponibiliteId} className="item">
+              <li key={d.dispoId} className="item">
                 <span className="item-day">{d.jourSemaine}</span>
                 <span className="item-hours">{d.heureDebut} - {d.heureFin}</span>
-                <button className="btn btn-small btn-danger" onClick={() => handleRemoveDispo(d.disponibiliteId)}>✕</button>
+                <button className="btn btn-small btn-danger" onClick={() => handleRemoveDispo(d.dispoId)}>✕</button>
               </li>
             ))}
             {disponibilites.length === 0 && <li className="empty">Aucune disponibilité définie</li>}
@@ -149,26 +155,31 @@ function DisponibilitesPage() {
           <button className="btn btn-success" onClick={handleSaveDispos} disabled={loading}>
             Enregistrer les disponibilités
           </button>
+          {dirty && <span className="hint"> Modifications non enregistrées</span>}
         </div>
       )}
 
       {activeTab === 'indispos' && (
         <div className="tab-content">
           <form className="inline-form" onSubmit={handleAddIndispo}>
-            <input type="date" value={newIndispo.dateDebut} onChange={e => setNewIndispo({ ...newIndispo, dateDebut: e.target.value })} required />
-            <input type="date" value={newIndispo.dateFin} onChange={e => setNewIndispo({ ...newIndispo, dateFin: e.target.value })} required />
+            <label className="inline-label">Du
+              <input type="datetime-local" value={newIndispo.dateDebut} onChange={e => setNewIndispo({ ...newIndispo, dateDebut: e.target.value })} required />
+            </label>
+            <label className="inline-label">au
+              <input type="datetime-local" value={newIndispo.dateFin} onChange={e => setNewIndispo({ ...newIndispo, dateFin: e.target.value })} required />
+            </label>
             <input type="text" placeholder="Motif" value={newIndispo.motif} onChange={e => setNewIndispo({ ...newIndispo, motif: e.target.value })} />
             <button type="submit" className="btn btn-primary btn-small">Ajouter</button>
           </form>
 
           <ul className="items-list">
             {indisponibilites.map(i => (
-              <li key={i.indisponibiliteId} className="item">
+              <li key={i.indispoId} className="item">
                 <span className="item-date">
-                  {new Date(i.dateDebut).toLocaleDateString('fr-FR')} → {new Date(i.dateFin).toLocaleDateString('fr-FR')}
+                  {formatDateTime(i.dateDebut)} → {formatDateTime(i.dateFin)}
                 </span>
                 <span className="item-desc">{i.motif || '—'}</span>
-                <button className="btn btn-small btn-danger" onClick={() => handleDeleteIndispo(i.indisponibiliteId)}>Supprimer</button>
+                <button className="btn btn-small btn-danger" onClick={() => handleDeleteIndispo(i.indispoId)}>Supprimer</button>
               </li>
             ))}
             {indisponibilites.length === 0 && <li className="empty">Aucune indisponibilité</li>}

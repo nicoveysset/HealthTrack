@@ -9,11 +9,19 @@
   </parent>
   <artifactId>healthtrack-disponibilites-rdv</artifactId>
   <name>HealthTrack API Disponibilités/RDV</name>
+  <properties>
+    <openapi.file>openapi-disponibilites-rdv.yaml</openapi.file>
+  </properties>
+
   <build>
     <plugins>
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
       </plugin>
     </plugins>
   </build>

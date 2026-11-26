@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../services/auth';
 import { API_URLS } from '../../services/api';
+import { toISODate, addDays, apiError, SPECIALITES } from '../../utils/format';
 import axios from 'axios';
 
 function PriseRdvPage() {
@@ -12,12 +13,8 @@ function PriseRdvPage() {
   const [praticiens, setPraticiens] = useState([]);
   const [selectedPraticien, setSelectedPraticien] = useState(null);
   const [creneaux, setCreneaux] = useState([]);
-  const [dateDebut, setDateDebut] = useState(new Date().toISOString().split('T')[0]);
-  const [dateFin, setDateFin] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 14);
-    return d.toISOString().split('T')[0];
-  });
+  const [dateDebut, setDateDebut] = useState(toISODate());
+  const [dateFin, setDateFin] = useState(() => toISODate(addDays(new Date(), 14)));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
@@ -36,7 +33,7 @@ function PriseRdvPage() {
         });
         setPraticiens(res.data.items || []);
       } catch (err) {
-        setError(err.response?.data?.message || 'Erreur lors du chargement des praticiens');
+        setError(apiError(err, 'Erreur lors du chargement des praticiens'));
       }
     };
     fetchPraticiens();
@@ -56,9 +53,11 @@ function PriseRdvPage() {
         { headers, params: { dateDebut, dateFin } }
       );
       const allCreneaux = res.data || [];
-      setCreneaux(allCreneaux.filter(c => c.disponible));
+      // L'API ne renvoie que les creneaux libres ({date, heure, duree}) :
+      // on n'exclut que ceux explicitement marques indisponibles.
+      setCreneaux(allCreneaux.filter(c => c.disponible !== false));
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur lors du chargement des créneaux');
+      setError(apiError(err, 'Erreur lors du chargement des créneaux'));
     } finally {
       setLoading(false);
     }
@@ -86,12 +85,12 @@ function PriseRdvPage() {
         },
         { headers }
       );
-      setSuccess('Rendez-vous pris avec succès !');
+      setSuccess('Rendez-vous pris avec succès ! Retrouvez-le dans « Mes rendez-vous ».');
       setSelectedCreneau(null);
       setMotif('');
       fetchCreneaux();
     } catch (err) {
-      setError(err.response?.data?.message || 'Erreur lors de la prise de RDV');
+      setError(apiError(err, 'Erreur lors de la prise de RDV'));
     } finally {
       setLoading(false);
     }
@@ -126,7 +125,7 @@ function PriseRdvPage() {
             <option value="">— Choisir un praticien —</option>
             {praticiens.map(p => (
               <option key={p.userId} value={p.userId}>
-                Dr {p.firstName} {p.lastName} {p.specialite ? `(${p.specialite})` : ''}
+                Dr {p.firstName} {p.lastName} {p.specialite ? `— ${SPECIALITES[p.specialite] || p.specialite}` : ''}
               </option>
             ))}
           </select>
@@ -140,7 +139,7 @@ function PriseRdvPage() {
                 <input
                   type="date"
                   value={dateDebut}
-                  min={new Date().toISOString().split('T')[0]}
+                  min={toISODate()}
                   onChange={(e) => setDateDebut(e.target.value)}
                 />
               </div>
@@ -163,7 +162,7 @@ function PriseRdvPage() {
               <div className="creneaux-list">
                 {Object.entries(creneauxByDate).map(([date, crs]) => (
                   <div key={date} className="creneaux-day">
-                    <h4>{new Date(date).toLocaleDateString('fr-FR', {
+                    <h4>{new Date(`${date}T00:00:00`).toLocaleDateString('fr-FR', {
                       weekday: 'long', day: 'numeric', month: 'long'
                     })}</h4>
                     <div className="creneaux-grid">
@@ -186,7 +185,7 @@ function PriseRdvPage() {
               <div className="rdv-confirmation">
                 <h3>Confirmer le rendez-vous</h3>
                 <p>
-                  <strong>Date :</strong> {new Date(selectedCreneau.date).toLocaleDateString('fr-FR')} à {selectedCreneau.heure}
+                  <strong>Date :</strong> {new Date(`${selectedCreneau.date}T00:00:00`).toLocaleDateString('fr-FR')} à {selectedCreneau.heure}
                 </p>
                 <p><strong>Praticien :</strong> Dr {selectedPraticien.firstName} {selectedPraticien.lastName}</p>
                 <div className="form-group">

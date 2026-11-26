@@ -1,5 +1,2 @@
 package com.healthtrack.utilisateurs.model;
-
-public enum UserType {
-    PRATICIEN, PATIENT
-}
+public enum UserType { PRATICIEN, PATIENT }

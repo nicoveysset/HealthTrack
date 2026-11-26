@@ -173,6 +173,12 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Remplacer l'utilisateur courant (après une mise à jour faite par une autre route)
+  const setCurrentUser = useCallback((updated) => {
+    setUser(updated);
+    localStorage.setItem('healthtrack_user', JSON.stringify(updated));
+  }, []);
+
   // Gérer les erreurs d'authentification
   const handleAuthError = (err) => {
     if (err.response) {
@@ -223,6 +229,7 @@ export const AuthProvider = ({ children }) => {
     logout,
     getProfile,
     updateProfile,
+    setCurrentUser,
     setError
   };
 
