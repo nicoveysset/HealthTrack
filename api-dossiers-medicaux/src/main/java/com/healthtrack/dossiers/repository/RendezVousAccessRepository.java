@@ -16,11 +16,13 @@ public class RendezVousAccessRepository {
         this.table = client.table("healthtrack-rendezvous", TableSchema.fromBean(RendezVousReference.class));
     }
 
+    /** Vrai si le praticien a déjà reçu ce patient (consultation TERMINE) ou est en train de le recevoir (EN_COURS). */
     public boolean hasCompletedAppointment(String patientId, String praticienId) {
         var index = table.index("byPatientAndDate");
         for (var page : index.query(QueryConditional.keyEqualTo(Key.builder().partitionValue(patientId).build()))) {
             if (page.items().stream().anyMatch(rdv ->
-                praticienId.equals(rdv.getPraticienId()) && "TERMINE".equals(rdv.getStatut()))) {
+                praticienId.equals(rdv.getPraticienId())
+                && ("TERMINE".equals(rdv.getStatut()) || "EN_COURS".equals(rdv.getStatut())))) {
                 return true;
             }
         }

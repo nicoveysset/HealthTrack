@@ -14,6 +14,14 @@ public class OrdonnanceRepository {
         var idx = table.index("byCompteRendu");
         for (var page : idx.query(QueryConditional.keyEqualTo(Key.builder().partitionValue(crId).build()))) { if (!page.items().isEmpty()) return true; } return false;
     }
+    public Optional<Ordonnance> findByRdvId(String rdvId) {
+        var idx = table.index("byRendezVous");
+        for (var p : idx.query(QueryConditional.keyEqualTo(Key.builder().partitionValue(rdvId).build()))) {
+            var first = p.items().stream().findFirst();
+            if (first.isPresent()) return first;
+        }
+        return Optional.empty();
+    }
     public List<Ordonnance> findByPatient(String pid) {
         var idx = table.index("byPatientAndDate");
         List<Ordonnance> out = new ArrayList<>();

@@ -10,6 +10,9 @@ public class RendezVous {
     private String heure;
     private Integer duree;
     private String statut;
+    private String patientNom;
+    private String praticienNom;
+    private String motif;
     private String createdAt;
     private String updatedAt;
 
@@ -31,4 +34,10 @@ public class RendezVous {
     public void setCreatedAt(String v) { createdAt = v; }
     @DynamoDbAttribute("updatedAt") public String getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(String v) { updatedAt = v; }
+    @DynamoDbAttribute("patientNom") public String getPatientNom() { return patientNom; }
+    public void setPatientNom(String v) { patientNom = v; }
+    @DynamoDbAttribute("praticienNom") public String getPraticienNom() { return praticienNom; }
+    public void setPraticienNom(String v) { praticienNom = v; }
+    @DynamoDbAttribute("motif") public String getMotif() { return motif; }
+    public void setMotif(String v) { motif = v; }
 }

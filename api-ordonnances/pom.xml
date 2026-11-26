@@ -9,6 +9,10 @@
   </parent>
   <artifactId>healthtrack-ordonnances</artifactId>
   <name>HealthTrack API Ordonnances</name>
+  <properties>
+    <openapi.file>openapi-ordonnances.yaml</openapi.file>
+  </properties>
+
   <build>
     <plugins>
       <plugin>

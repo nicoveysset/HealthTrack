@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../services/auth';
 import { Role } from '../services/auth';
+import { apiError } from '../utils/format';
 
 /**
  * Page de connexion
@@ -40,7 +41,7 @@ function LoginPage() {
       const from = location.state?.from || '/';
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err.message || 'Erreur de connexion');
+      setError(apiError(err, 'Erreur de connexion'));
     } finally {
       setLoading(false);
     }

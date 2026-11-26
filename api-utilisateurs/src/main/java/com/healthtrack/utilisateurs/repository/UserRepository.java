@@ -59,22 +59,17 @@ public class UserRepository {
         return user;
     }
 
-    public List<User> listPraticiens(String specialite, String statut, int page, int limit) {
-        var scan = table.scan(ScanEnhancedRequest.builder().limit(limit).build());
+    /** Tous les praticiens correspondant aux filtres (la pagination est faite par le service). */
+    public List<User> findPraticiens(String specialite, String statut) {
         List<User> all = new ArrayList<>();
-        for (var p : scan) {
+        for (var p : table.scan()) {
             all.addAll(p.items().stream()
                 .filter(u -> "PRATICIEN".equals(u.getType()))
                 .filter(u -> specialite == null || specialite.equalsIgnoreCase(u.getSpecialite()))
-                .filter(u -> statut == null || statut.equals(u.getStatut()))
+                .filter(u -> statut == null || statut.equalsIgnoreCase(u.getStatut()))
                 .collect(Collectors.toList()));
         }
         return all;
-    }
-
-    private String buildFilter(String specialite, String statut) {
-        // Le filtre est appliqué côté client pour simplifier (DynamoDB scan filter)
-        return null; // pas de filterExpression, on filtre en Java
     }
 
     public long countPraticiens() {

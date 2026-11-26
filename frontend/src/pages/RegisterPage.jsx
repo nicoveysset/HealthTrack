@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../services/auth';
 import { Role } from '../services/auth';
+import { SPECIALITES, apiError } from '../utils/format';
 
 /**
  * Page d'inscription
@@ -79,7 +80,7 @@ function RegisterPage() {
       const from = location.state?.from || '/';
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err.message || 'Erreur lors de l\'inscription');
+      setError(apiError(err, "Erreur lors de l'inscription"));
     } finally {
       setLoading(false);
     }
@@ -167,15 +168,16 @@ function RegisterPage() {
             <>
               <div className="form-group">
                 <label htmlFor="specialite">Spécialité</label>
-                <input
-                  type="text"
+                <select
                   id="specialite"
                   name="specialite"
                   value={formData.specialite}
                   onChange={handleChange}
                   required
-                  placeholder="Ex: Médecine générale"
-                />
+                >
+                  <option value="">— Choisir —</option>
+                  {Object.entries(SPECIALITES).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
               </div>
 
               <div className="form-group">

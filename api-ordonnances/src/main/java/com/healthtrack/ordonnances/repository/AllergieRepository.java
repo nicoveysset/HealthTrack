@@ -26,8 +26,7 @@ public class AllergieRepository {
         var index = table.index("byPatient");
         for (var page : index.query(QueryConditional.keyEqualTo(Key.builder().partitionValue(patientId).build()))) {
             for (AllergieReference allergie : page.items()) {
-                if (sameMedication(allergie.getMedicamentConcerne(), nom)
-                    || sameMedication(allergie.getMedicamentConcerne(), substanceActive)) {
+                if (allergyMatches(allergie.getMedicamentConcerne(), nom, substanceActive)) {
                     return true;
                 }
             }
@@ -35,12 +34,26 @@ public class AllergieRepository {
         return false;
     }
 
-    private boolean sameMedication(String first, String second) {
-        if (first == null || second == null) return false;
-        return normalize(first).equals(normalize(second));
+    /**
+     * Une allergie correspond à un médicament si son libellé correspond au nom commercial
+     * ou à la substance active, en entier ou comme mot (ex. allergie "Amoxicilline" ↔
+     * "Amoxicilline 500 mg" ou "Augmentin" (amoxicilline + acide clavulanique)). Accents et casse ignorés.
+     */
+    static boolean allergyMatches(String allergie, String nom, String substance) {
+        String a = normalize(allergie);
+        if (a.isEmpty()) return false;
+        return containsWord(normalize(nom), a) || containsWord(normalize(substance), a);
     }
 
-    private String normalize(String value) {
+    private static boolean containsWord(String text, String word) {
+        if (text.isEmpty()) return false;
+        String t = " " + text.replaceAll("[^a-z0-9]+", " ").trim() + " ";
+        String w = " " + word.replaceAll("[^a-z0-9]+", " ").trim() + " ";
+        return t.contains(w);
+    }
+
+    private static String normalize(String value) {
+        if (value == null) return "";
         return Normalizer.normalize(value, Normalizer.Form.NFD)
             .replaceAll("\\p{M}", "")
             .trim()

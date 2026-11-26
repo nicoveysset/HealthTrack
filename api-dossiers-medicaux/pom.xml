@@ -9,6 +9,10 @@
   </parent>
   <artifactId>healthtrack-dossiers-medicaux</artifactId>
   <name>HealthTrack API Dossiers Médicaux</name>
+  <properties>
+    <openapi.file>openapi-dossiers-medicaux.yaml</openapi.file>
+  </properties>
+
   <build>
     <plugins>
       <plugin>

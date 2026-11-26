@@ -46,7 +46,8 @@ function Layout({ children }) {
                 <>
                   <NavLink to="/prise-rdv">Prendre un RDV</NavLink>
                   <NavLink to="/mes-rendezvous">Mes rendez-vous</NavLink>
-                  <NavLink to="/dossier-medical">Mon dossier médical</NavLink>
+                  <NavLink to="/mes-ordonnances">Mes ordonnances</NavLink>
+                  <NavLink to="/dossier-medical">Mon dossier</NavLink>
                 </>
               )}
             </nav>

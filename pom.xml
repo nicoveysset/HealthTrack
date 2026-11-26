@@ -153,6 +153,20 @@
   </dependencies>
 
   <build>
+    <!-- Le contrat OpenAPI de chaque API (docs/openapi-xxx.yaml, propriété openapi.file du module)
+         est embarqué dans le JAR et servi par Swagger UI : la documentation reste une source unique. -->
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <resource>
+        <directory>${project.basedir}/../docs</directory>
+        <targetPath>static</targetPath>
+        <includes>
+          <include>${openapi.file}</include>
+        </includes>
+      </resource>
+    </resources>
     <pluginManagement>
       <plugins>
         <plugin>

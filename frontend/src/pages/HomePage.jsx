@@ -55,7 +55,7 @@ function HomePage() {
   return (
     <div className="page home-page">
       <div className="welcome">
-        <h1>Bonjour, {user.firstName} {user.lastName} !</h1>
+        <h1>Bonjour{user.type === Role.PRATICIEN ? ', Dr' : ','} {user.firstName} {user.lastName} !</h1>
         
         {user.type === Role.PRATICIEN && (
           <div className="praticien-dashboard">
@@ -63,7 +63,7 @@ function HomePage() {
             <div className="quick-actions">
               <Link to="/agenda" className="action-card">
                 <h3>Agenda</h3>
-                <p>Consultez vos rendez-vous du jour</p>
+                <p>Rendez-vous du jour et de la semaine</p>
               </Link>
               
               <Link to="/disponibilites" className="action-card">
@@ -93,9 +93,14 @@ function HomePage() {
                 <p>Consultez ou annulez vos RDV</p>
               </Link>
 
+              <Link to="/mes-ordonnances" className="action-card">
+                <h3>Mes ordonnances</h3>
+                <p>Retrouvez vos prescriptions</p>
+              </Link>
+
               <Link to="/dossier-medical" className="action-card">
                 <h3>Dossier médical</h3>
-                <p>Consultez votre historique</p>
+                <p>Antécédents, allergies, vaccins</p>
               </Link>
               
               <Link to="/profile" className="action-card">

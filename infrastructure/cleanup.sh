@@ -271,6 +271,19 @@ fi
 echo ""
 
 # =============================================================================
+# Supprimer les alarmes CloudWatch (deploy-monitoring.sh)
+# =============================================================================
+echo "🔔 Suppression des alarmes CloudWatch HealthTrack..."
+ALARMS=$(aws cloudwatch describe-alarms --alarm-name-prefix "HealthTrack-" --region "$REGION" --query 'MetricAlarms[].AlarmName' --output text)
+if [ -n "$ALARMS" ]; then
+    # shellcheck disable=SC2086
+    aws cloudwatch delete-alarms --alarm-names $ALARMS --region "$REGION"
+    echo "  ✅ Alarmes supprimées : $ALARMS"
+fi
+
+echo ""
+
+# =============================================================================
 # Supprimer les fichiers .env
 # =============================================================================
 echo "📝 Suppression des fichiers .env..."

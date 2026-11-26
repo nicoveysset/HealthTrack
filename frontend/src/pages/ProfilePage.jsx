@@ -1,285 +1,204 @@
 /**
- * Page de profil utilisateur
+ * Page de profil
+ * - Tous : consultation et modification de son profil (PATCH /utilisateurs/me)
+ * - Praticien : changement de statut ACTIF / EN_CONGE / INACTIF (PATCH /praticiens/me/statut)
+ * - Patient : désignation / modification du médecin traitant (PUT /patients/me/medecin-traitant)
  */
 import React, { useState, useEffect } from 'react';
-import { useAuth } from '../services/auth';
-import { Role } from '../services/auth';
+import { useAuth, Role } from '../services/auth';
+import { API_URLS } from '../services/api';
+import { apiError, formatDate, formatDateTime, SPECIALITES, STATUTS_PRATICIEN } from '../utils/format';
+import axios from 'axios';
 
-/**
- * Page de profil
- */
 function ProfilePage() {
-  const { user, getProfile, updateProfile, loading, error } = useAuth();
+  const { user, token, updateProfile, setCurrentUser } = useAuth();
   const [formData, setFormData] = useState({});
   const [editMode, setEditMode] = useState(false);
-  const [updateError, setUpdateError] = useState(null);
-  const [updateLoading, setUpdateLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [success, setSuccess] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [generalistes, setGeneralistes] = useState([]);
+  const [medecinTraitant, setMedecinTraitant] = useState(null);
+  const [choixMedecin, setChoixMedecin] = useState('');
 
-  // Charger le profil au montage
+  const headers = { Authorization: `Bearer ${token}` };
+  const isPraticien = user?.type === Role.PRATICIEN;
+
+  useEffect(() => { if (user) setFormData(user); }, [user]);
+
+  // Patient : liste des généralistes et nom du médecin traitant actuel
   useEffect(() => {
-    if (user) {
-      setFormData(user);
+    if (!user || isPraticien) return;
+    axios.get(`${API_URLS.utilisateurs}/praticiens`, { headers, params: { specialite: 'GENERALISTE', limit: 100 } })
+      .then(res => setGeneralistes(res.data.items || [])).catch(() => {});
+    if (user.medecinTraitantId) {
+      axios.get(`${API_URLS.utilisateurs}/utilisateurs/${user.medecinTraitantId}`, { headers })
+        .then(res => setMedecinTraitant(res.data)).catch(() => setMedecinTraitant(null));
     } else {
-      getProfile();
+      setMedecinTraitant(null);
     }
-  }, [user, getProfile]);
+  }, [user?.medecinTraitantId, isPraticien, token]);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
+  const notify = (msg) => { setSuccess(msg); setError(null); setTimeout(() => setSuccess(null), 3000); };
+
+  const handleChange = (e) => setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setUpdateLoading(true);
-    setUpdateError(null);
-
+    e?.preventDefault();
+    setSaving(true);
     try {
-      await updateProfile(formData);
+      const payload = { firstName: formData.firstName, lastName: formData.lastName };
+      if (isPraticien) Object.assign(payload, { specialite: formData.specialite, rpps: formData.rpps });
+      else Object.assign(payload, { dateNaissance: formData.dateNaissance, nss: formData.nss });
+      await updateProfile(payload);
       setEditMode(false);
+      notify('Profil mis à jour.');
     } catch (err) {
-      setUpdateError(err.message || 'Erreur lors de la mise à jour du profil');
+      setError(apiError(err, 'Erreur lors de la mise à jour du profil'));
     } finally {
-      setUpdateLoading(false);
+      setSaving(false);
     }
   };
 
-  if (loading) {
-    return <div className="loading">Chargement du profil...</div>;
-  }
+  const changerStatut = async (statut) => {
+    if (statut === user.statut) return;
+    if (statut !== 'ACTIF' && !window.confirm(`Passer en statut « ${STATUTS_PRATICIEN[statut]} » ? Vous ne pourrez plus recevoir de rendez-vous.`)) return;
+    try {
+      const res = await axios.patch(`${API_URLS.utilisateurs}/praticiens/me/statut`, { statut }, { headers });
+      setCurrentUser(res.data);
+      notify(`Statut : ${STATUTS_PRATICIEN[statut]}`);
+    } catch (err) {
+      setError(apiError(err));
+    }
+  };
 
-  if (!user) {
-    return <div className="alert alert-error">Profil non trouvé</div>;
-  }
+  const designerMedecin = async () => {
+    if (!choixMedecin) return;
+    try {
+      const res = await axios.put(`${API_URLS.utilisateurs}/patients/me/medecin-traitant`,
+        { medecinTraitantId: choixMedecin }, { headers });
+      setCurrentUser(res.data);
+      setChoixMedecin('');
+      notify('Médecin traitant enregistré.');
+    } catch (err) {
+      // InvalidSpecialityException (non généraliste) ou PractitionerNotAvailableException (INACTIF)
+      setError(apiError(err));
+    }
+  };
+
+  if (!user) return <div className="alert alert-error">Profil non trouvé</div>;
+
+  const field = (label, name, view, input) => (
+    <div className="form-group">
+      <label>{label}</label>
+      {editMode && input ? input : <div className="form-value">{view || '—'}</div>}
+    </div>
+  );
 
   return (
     <div className="page profile-page">
       <div className="page-header">
         <h1>Mon profil</h1>
-        
         {!editMode ? (
-          <button 
-            className="btn btn-secondary" 
-            onClick={() => setEditMode(true)}
-          >
-            Modifier
-          </button>
+          <button className="btn btn-secondary" onClick={() => setEditMode(true)}>Modifier</button>
         ) : (
-          <>
-            <button 
-              className="btn btn-primary" 
-              onClick={handleSubmit}
-              disabled={updateLoading}
-            >
-              {updateLoading ? 'Enregistrement...' : 'Enregistrer'}
+          <div className="form-actions">
+            <button className="btn btn-primary" onClick={handleSubmit} disabled={saving}>
+              {saving ? 'Enregistrement...' : 'Enregistrer'}
             </button>
-            <button 
-              className="btn btn-cancel" 
-              onClick={() => {
-                setEditMode(false);
-                setFormData(user);
-              }}
-            >
+            <button className="btn btn-cancel" onClick={() => { setEditMode(false); setFormData(user); setError(null); }}>
               Annuler
             </button>
-          </>
+          </div>
         )}
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
-      {updateError && <div className="alert alert-error">{updateError}</div>}
+      {success && <div className="alert alert-success">{success}</div>}
 
       <form onSubmit={handleSubmit} className="profile-form">
         <div className="form-row">
-          <div className="form-group">
-            <label>Type de compte</label>
-            <div className="form-value">
-              {user.type === Role.PRATICIEN ? 'Praticien' : 'Patient'}
-            </div>
-          </div>
+          {field('Type de compte', null, isPraticien ? 'Praticien' : 'Patient')}
+          {field('Email', null, user.email)}
         </div>
-
         <div className="form-row">
-          <div className="form-group">
-            <label>Email</label>
-            {editMode ? (
-              <input
-                type="email"
-                name="email"
-                value={formData.email || ''}
-                onChange={handleChange}
-                disabled
-              />
-            ) : (
-              <div className="form-value">{user.email}</div>
-            )}
-          </div>
+          {field('Prénom', 'firstName', user.firstName,
+            <input type="text" name="firstName" value={formData.firstName || ''} onChange={handleChange} required />)}
+          {field('Nom', 'lastName', user.lastName,
+            <input type="text" name="lastName" value={formData.lastName || ''} onChange={handleChange} required />)}
         </div>
 
-        <div className="form-row">
-          <div className="form-group">
-            <label>Prénom</label>
-            {editMode ? (
-              <input
-                type="text"
-                name="firstName"
-                value={formData.firstName || ''}
-                onChange={handleChange}
-              />
-            ) : (
-              <div className="form-value">{user.firstName}</div>
-            )}
-          </div>
-          
-          <div className="form-group">
-            <label>Nom</label>
-            {editMode ? (
-              <input
-                type="text"
-                name="lastName"
-                value={formData.lastName || ''}
-                onChange={handleChange}
-              />
-            ) : (
-              <div className="form-value">{user.lastName}</div>
-            )}
-          </div>
-        </div>
-
-        {/* Champs spécifiques aux praticiens */}
-        {user.type === Role.PRATICIEN && (
+        {isPraticien && (
           <>
             <h2>Informations professionnelles</h2>
-            
             <div className="form-row">
-              <div className="form-group">
-                <label>Spécialité</label>
-                {editMode ? (
-                  <input
-                    type="text"
-                    name="specialite"
-                    value={formData.specialite || ''}
-                    onChange={handleChange}
-                  />
-                ) : (
-                  <div className="form-value">{user.specialite}</div>
-                )}
-              </div>
+              {field('Spécialité', 'specialite', SPECIALITES[user.specialite] || user.specialite,
+                <select name="specialite" value={formData.specialite || ''} onChange={handleChange}>
+                  {Object.entries(SPECIALITES).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>)}
+              {field('N° RPPS', 'rpps', user.rpps,
+                <input type="text" name="rpps" value={formData.rpps || ''} onChange={handleChange} />)}
             </div>
-
-            <div className="form-row">
-              <div className="form-group">
-                <label>RPPS</label>
-                {editMode ? (
-                  <input
-                    type="text"
-                    name="rpps"
-                    value={formData.rpps || ''}
-                    onChange={handleChange}
-                  />
-                ) : (
-                  <div className="form-value">{user.rpps}</div>
-                )}
-              </div>
-            </div>
-
-            <div className="form-row">
-              <div className="form-group">
-                <label>Statut</label>
-                {editMode ? (
-                  <select
-                    name="statut"
-                    value={formData.statut || ''}
-                    onChange={handleChange}
-                  >
-                    <option value="ACTIF">Actif</option>
-                    <option value="EN_CONGE">En congé</option>
-                    <option value="INACTIF">Inactif</option>
-                  </select>
-                ) : (
-                  <div className="form-value">{user.statut}</div>
-                )}
-              </div>
-            </div>
-
-            {editMode && (
-              <div className="form-group">
-                <label>Médecin traitant (pour les patients qui vous ont choisi)</label>
-                <div className="form-value">
-                  {user.medecinTraitantId ? 'Oui' : 'Non'}
-                </div>
-              </div>
-            )}
           </>
         )}
 
-        {/* Champs spécifiques aux patients */}
-        {user.type === Role.PATIENT && (
+        {!isPraticien && (
           <>
             <h2>Informations personnelles</h2>
-            
             <div className="form-row">
-              <div className="form-group">
-                <label>Date de naissance</label>
-                {editMode ? (
-                  <input
-                    type="date"
-                    name="dateNaissance"
-                    value={formData.dateNaissance || ''}
-                    onChange={handleChange}
-                  />
-                ) : (
-                  <div className="form-value">{user.dateNaissance}</div>
-                )}
-              </div>
+              {field('Date de naissance', 'dateNaissance', formatDate(user.dateNaissance),
+                <input type="date" name="dateNaissance" value={formData.dateNaissance || ''} onChange={handleChange} />)}
+              {field('N° de sécurité sociale', 'nss', user.nss,
+                <input type="text" name="nss" value={formData.nss || ''} onChange={handleChange} />)}
             </div>
-
-            <div className="form-row">
-              <div className="form-group">
-                <label>Numéro de sécurité sociale</label>
-                {editMode ? (
-                  <input
-                    type="text"
-                    name="nss"
-                    value={formData.nss || ''}
-                    onChange={handleChange}
-                  />
-                ) : (
-                  <div className="form-value">{user.nss}</div>
-                )}
-              </div>
-            </div>
-
-            {user.medecinTraitantId && (
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Médecin traitant</label>
-                  <div className="form-value">
-                    ID: {user.medecinTraitantId}
-                  </div>
-                </div>
-              </div>
-            )}
           </>
         )}
 
         <div className="form-row">
-          <div className="form-group">
-            <label>Date de création du compte</label>
-            <div className="form-value">{user.createdAt}</div>
-          </div>
-        </div>
-
-        <div className="form-row">
-          <div className="form-group">
-            <label>Dernière mise à jour</label>
-            <div className="form-value">{user.updatedAt}</div>
-          </div>
+          {field('Compte créé le', null, formatDateTime(user.createdAt))}
+          {field('Dernière mise à jour', null, formatDateTime(user.updatedAt))}
         </div>
       </form>
+
+      {isPraticien && (
+        <div className="profile-section">
+          <h2>Statut</h2>
+          <p className="hint">En congé ou inactif, vous ne pouvez plus recevoir de rendez-vous.</p>
+          <div className="statut-switch">
+            {Object.entries(STATUTS_PRATICIEN).map(([v, l]) => (
+              <button key={v} type="button" className={`btn btn-small ${user.statut === v ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => changerStatut(v)}>
+                {l}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isPraticien && (
+        <div className="profile-section">
+          <h2>Médecin traitant</h2>
+          <p>
+            {medecinTraitant
+              ? <>Actuel : <strong>Dr {medecinTraitant.firstName} {medecinTraitant.lastName}</strong>
+                  {medecinTraitant.statut !== 'ACTIF' && <small> ({STATUTS_PRATICIEN[medecinTraitant.statut]})</small>}</>
+              : 'Aucun médecin traitant désigné.'}
+          </p>
+          <div className="inline-form">
+            <select value={choixMedecin} onChange={e => setChoixMedecin(e.target.value)}>
+              <option value="">— Choisir un médecin généraliste —</option>
+              {generalistes.filter(g => g.userId !== user.medecinTraitantId).map(g => (
+                <option key={g.userId} value={g.userId}>
+                  Dr {g.firstName} {g.lastName}{g.statut !== 'ACTIF' ? ` (${STATUTS_PRATICIEN[g.statut]})` : ''}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="btn btn-primary btn-small" disabled={!choixMedecin} onClick={designerMedecin}>
+              {user.medecinTraitantId ? 'Changer' : 'Désigner'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

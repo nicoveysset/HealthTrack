@@ -56,16 +56,29 @@ public class PrescriptionLookupRepository {
     }
 
     private boolean matches(String allergyMedication, MedicamentReference medicament) {
-        return sameMedication(allergyMedication, medicament.getNom())
-            || sameMedication(allergyMedication, medicament.getSubstanceActive());
+        return allergyMatches(allergyMedication, medicament.getNom(), medicament.getSubstanceActive());
     }
 
-    private boolean sameMedication(String first, String second) {
-        if (first == null || second == null) return false;
-        return normalize(first).equals(normalize(second));
+    /**
+     * Une allergie correspond à un médicament si son libellé correspond au nom commercial
+     * ou à la substance active, en entier ou comme mot (ex. allergie "Amoxicilline" ↔
+     * "Amoxicilline 500 mg" ou "Augmentin" (amoxicilline + acide clavulanique)). Accents et casse ignorés.
+     */
+    static boolean allergyMatches(String allergie, String nom, String substance) {
+        String a = normalize(allergie);
+        if (a.isEmpty()) return false;
+        return containsWord(normalize(nom), a) || containsWord(normalize(substance), a);
     }
 
-    private String normalize(String value) {
+    private static boolean containsWord(String text, String word) {
+        if (text.isEmpty()) return false;
+        String t = " " + text.replaceAll("[^a-z0-9]+", " ").trim() + " ";
+        String w = " " + word.replaceAll("[^a-z0-9]+", " ").trim() + " ";
+        return t.contains(w);
+    }
+
+    private static String normalize(String value) {
+        if (value == null) return "";
         return Normalizer.normalize(value, Normalizer.Form.NFD)
             .replaceAll("\\p{M}", "")
             .trim()

@@ -9,6 +9,8 @@ public class CompteRendu {
     private String patientId;
     private String contenu;
     private String dateFinalisation;
+    private String diagnostic;
+    private String statut;
     private String createdAt;
     private String updatedAt;
 
@@ -28,4 +30,8 @@ public class CompteRendu {
     public void setCreatedAt(String v) { createdAt = v; }
     @DynamoDbAttribute("updatedAt") public String getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(String v) { updatedAt = v; }
+    @DynamoDbAttribute("diagnostic") public String getDiagnostic() { return diagnostic; }
+    public void setDiagnostic(String v) { diagnostic = v; }
+    @DynamoDbAttribute("statut") public String getStatut() { return statut; }
+    public void setStatut(String v) { statut = v; }
 }

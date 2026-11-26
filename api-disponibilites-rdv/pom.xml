@@ -9,6 +9,10 @@
   </parent>
   <artifactId>healthtrack-disponibilites-rdv</artifactId>
   <name>HealthTrack API Disponibilités/RDV</name>
+  <properties>
+    <openapi.file>openapi-disponibilites-rdv.yaml</openapi.file>
+  </properties>
+
   <build>
     <plugins>
       <plugin>

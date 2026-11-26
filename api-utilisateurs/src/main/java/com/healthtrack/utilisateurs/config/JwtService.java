@@ -16,7 +16,7 @@ public class JwtService {
     private final SecretKey key;
     private final long expirationMs;
 
-    public JwtService(@Value("${jwt.secret:healthtrack-default-secret-key-change-me-in-production-32}") String secret,
+    public JwtService(@Value("${jwt.secret}") String secret,
                       @Value("${jwt.expiration:86400000}") long expirationMs) {
         this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.expirationMs = expirationMs;

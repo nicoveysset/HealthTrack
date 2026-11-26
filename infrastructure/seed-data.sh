@@ -29,12 +29,14 @@ for command in curl jq; do
   fi
 done
 
-if [[ ! -f "$PROJECT_ROOT/.env.apigateway" ]]; then
-  echo "Missing .env.apigateway. Lancez deploy-apigateway.sh d'abord." >&2
+# ENV_FILE permet de cibler un autre environnement (ex. APIs lancées en local)
+ENV_FILE="${ENV_FILE:-$PROJECT_ROOT/.env.apigateway}"
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Missing $ENV_FILE. Lancez deploy-apigateway.sh d'abord." >&2
   exit 1
 fi
 # shellcheck source=/dev/null
-source "$PROJECT_ROOT/.env.apigateway"
+source "$ENV_FILE"
 
 # --- Appel HTTP : affiche le corps, met le code HTTP dans HTTP_CODE ----------
 call() {

@@ -1438,3 +1438,207 @@ a:hover {
 .gap-2 { gap: var(--spacing-sm); }
 .gap-3 { gap: var(--spacing-md); }
 .gap-4 { gap: var(--spacing-lg); }
+
+/* =============================================================================
+   Accueil : contenu descendu et centré au milieu de la page
+   ============================================================================ */
+.home-page {
+  min-height: calc(100vh - 220px);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-top: var(--spacing-2xl);
+}
+
+.home-page .welcome {
+  max-width: 980px;
+  width: 100%;
+  margin: 0 auto;
+  text-align: center;
+  padding: var(--spacing-2xl) var(--spacing-xl);
+}
+
+.home-page .quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spacing-md);
+  margin-top: var(--spacing-xl);
+}
+
+.home-page .action-card {
+  flex: 0 1 280px;
+}
+
+.home-page .hero,
+.home-page .features {
+  max-width: 1040px;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* =============================================================================
+   Éléments ajoutés (dossier, agenda, ordonnances, profil)
+   ============================================================================ */
+.select-inline {
+  width: auto;
+  display: inline-block;
+  padding: 0.25rem 0.6rem;
+  margin-left: var(--spacing-xs);
+}
+
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--color-gray-600);
+  margin: var(--spacing-sm) 0;
+  cursor: pointer;
+}
+
+.checkbox-inline input { width: auto; margin: 0; }
+
+.inline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--color-gray-600);
+}
+
+.inline-label input { width: auto; }
+
+.item-actions {
+  display: inline-flex;
+  gap: var(--spacing-xs);
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.edit-form {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  box-shadow: none;
+  border: none;
+  background: transparent;
+}
+
+.item-type.type-chronique {
+  background-color: var(--color-accent-light);
+  color: var(--color-accent-dark);
+}
+
+.dossier-info .severite { margin-right: var(--spacing-xs); }
+.rdv-summary .severite { margin-right: var(--spacing-xs); }
+
+.form-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-gray-500);
+}
+
+.date-navigator {
+  flex-wrap: wrap;
+  margin-bottom: var(--spacing-md);
+}
+
+.tabs-compact { margin: 0; }
+
+.agenda-stats {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-sm) var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+  background-color: var(--color-primary-soft);
+  border-radius: var(--border-radius-lg);
+  color: var(--color-gray-600);
+  font-size: var(--font-size-sm);
+}
+
+.agenda-stats strong { color: var(--color-primary); font-size: var(--font-size-lg); }
+.agenda-stats .checkbox-inline { margin: 0 0 0 auto; }
+
+.rdv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 0.15rem 0.65rem;
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  background-color: var(--color-gray-100);
+  color: var(--color-gray-600);
+}
+
+.status-badge.status-active { background-color: var(--color-success-light); color: #1f7a5d; }
+.status-badge.status-expiree { background-color: var(--color-gray-200); color: var(--color-gray-600); }
+
+.duree-longue {
+  color: var(--color-warning);
+  font-weight: 700;
+}
+
+.ordonnance-card { border-left: 4px solid var(--color-primary-light); }
+.ordonnance-card.status-active { border-left-color: var(--color-success); }
+.ordonnance-card.status-expiree { border-left-color: var(--color-gray-300); opacity: 0.85; }
+
+.ordonnance-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+
+.ordonnance-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.cr-contenu {
+  white-space: pre-wrap;
+  line-height: 1.6;
+}
+
+.filter-group { max-width: 320px; }
+
+.profile-section {
+  margin-top: var(--spacing-xl);
+  padding: var(--spacing-lg);
+  background-color: var(--color-white);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.profile-section h2 { margin-top: 0; }
+
+.statut-switch {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.profile-section .inline-form {
+  box-shadow: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+}

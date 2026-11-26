@@ -1,83 +1,62 @@
-# Déploiement AWS — HealthTrack
+# Infrastructure — scripts AWS CLI
 
-Le backend actuel est composé de quatre applications **Java 21 / Spring Boot**,
-chacune exécutée dans une Lambda, derrière une **API Gateway HTTP API v2**.
-Les données sont stockées dans DynamoDB et les logs d'exécution sont envoyés
-à CloudWatch Logs par le rôle d'exécution Lambda.
+Scripts Bash qui créent et mettent à jour toute l'infrastructure HealthTrack avec l'AWS CLI.
+Ils sont adaptés à **AWS Academy Learner Lab** : région `us-east-1` par défaut, rôle Lambda existant `LabRole`
+(aucune création IAM), pas de CloudFront. Le pas-à-pas complet est dans le [README principal](../README.md#4-déploiement-aws-pas-à-pas).
 
-L'authentification est le JWT maison de l'API Utilisateurs. Cognito n'est pas
-utilisé par cette configuration.
+## Scripts
 
-## Prérequis
+| Script | Rôle | Fichier produit |
+|---|---|---|
+| `deploy-dynamodb.sh` | Crée les 12 tables `healthtrack-*` et leurs GSI (ignore celles qui existent déjà) | — |
+| `deploy-lambdas.sh` | `mvn clean package`, envoi des JARs sur S3, création / mise à jour des 4 Lambdas Java 21 (1024 Mo, 30 s) avec `JWT_SECRET` | `.env.jwt_secret` |
+| `deploy-apigateway.sh` | Une HTTP API par Lambda (route `$default`, CORS) | `.env.apigateway` |
+| `deploy-frontend.sh` | Build React, génération de `config.js` (URLs des APIs), publication S3 en hébergement web | `.env.frontend` |
+| `deploy-monitoring.sh` | Alarmes CloudWatch sur les métriques métier `PrescriptionLongueDuree` et `AllergyConflict` | — |
+| `deploy-all.sh` | Enchaîne DynamoDB → Lambdas → API Gateway → Frontend → Monitoring | — |
+| `seed-data.sh` | Comptes de démonstration (5 praticiens, 2 patients), disponibilités, 8 médicaments — relançable sans risque | — |
+| `test-regles-metier.sh` | 76 vérifications de bout en bout des règles métier (code HTTP + nom d'exception) | — |
+| `cleanup.sh` | ⚠️ Supprime toutes les ressources HealthTrack de la région (tables et données comprises) | — |
+| `deploy-cognito.sh` | Non utilisé (option A du sujet) : le projet utilise l'authentification JWT maison (option B) | — |
+| `env.local` | URLs des APIs lancées en local, pour `ENV_FILE=env.local ./seed-data.sh` | — |
 
-- Java 21 et Maven 3.8+
-- Node.js 18+ et npm
-- AWS CLI configuré (`aws configure`)
-- `jq` et Bash (Linux, WSL ou Git Bash)
-- Droits AWS pour Lambda, API Gateway v2, DynamoDB, IAM, S3 et CloudFront
+Les fichiers `.env.*` sont écrits à la racine du projet et ignorés par Git. `.env.jwt_secret` contient le
+secret de signature des tokens : ne jamais le partager ni le committer.
 
-Les scripts utilisent `AWS_REGION` si elle est définie, sinon `eu-west-1`.
-
-## Déploiement complet
-
-Depuis ce dossier, avec Bash :
-
-```bash
-./deploy-all.sh
-```
-
-Le script crée les tables DynamoDB, construit et déploie les quatre JARs Java,
-configure les HTTP APIs, puis construit le frontend avec les URLs d'API et le
-publie sur S3 et CloudFront.
-
-Étapes individuelles :
+## Ordre d'exécution
 
 ```bash
+export AWS_REGION=us-east-1
 ./deploy-dynamodb.sh
 ./deploy-lambdas.sh
 ./deploy-apigateway.sh
 ./deploy-frontend.sh
+./deploy-monitoring.sh
+./seed-data.sh
 ```
 
-`deploy-lambdas.sh` construit les artefacts avec Maven. Chaque fonction utilise
-le runtime `java21` et le handler Java correspondant :
+Après une modification : `./deploy-lambdas.sh` (backend ou contrats OpenAPI) ou `./deploy-frontend.sh` (frontend).
 
-| Fonction Lambda | Handler |
-|---|---|
-| `healthtrack-api-utilisateurs` | `com.healthtrack.utilisateurs.LambdaHandler` |
-| `healthtrack-api-rdv` | `com.healthtrack.rdv.LambdaHandler` |
-| `healthtrack-api-dossiers` | `com.healthtrack.dossiers.LambdaHandler` |
-| `healthtrack-api-ordonnances` | `com.healthtrack.ordonnances.LambdaHandler` |
+## Variables d'environnement
 
-API Gateway transmet les événements au format HTTP API v2, attendu par ces
-handlers. Les routes sont protégées par le filtre JWT de chaque application ;
-les routes d'inscription et de connexion restent accessibles sans token.
+| Variable | Défaut | Utilisée par |
+|---|---|---|
+| `AWS_REGION` | `us-east-1` | tous |
+| `LAMBDA_ROLE_NAME` | `LabRole` | `deploy-lambdas.sh` |
+| `JWT_SECRET` | lu dans `.env.jwt_secret`, sinon généré | `deploy-lambdas.sh` |
+| `ARTIFACT_BUCKET` | `healthtrack-lambda-artifacts-<compte>-<region>` | `deploy-lambdas.sh` |
+| `FRONTEND_BUCKET` | lu dans `.env.frontend`, sinon nouveau bucket | `deploy-frontend.sh` |
+| `USE_CLOUDFRONT` | `false` | `deploy-frontend.sh` |
+| `SEED_PASSWORD` | `Demo1234!` | `seed-data.sh` |
+| `ENV_FILE` | `../.env.apigateway` | `seed-data.sh` |
+| `U`, `R`, `D`, `O` | `http://localhost:8081` … `8084` | `test-regles-metier.sh` (URLs des 4 APIs) |
+| `DYNAMO_ENDPOINT` | — | `test-regles-metier.sh` (test d'expiration, local uniquement) |
 
-## Configuration et fichiers générés
+## Points d'attention (Learner Lab)
 
-Le déploiement génère à la racine du projet :
-
-- `.env.jwt_secret` : secret partagé des JWT — ne pas partager ni committer.
-- `.env.apigateway` : URLs des quatre APIs.
-- `.env.frontend` : bucket S3, distribution CloudFront et URL publique.
-
-Ces fichiers sont ignorés par Git. Le frontend est compilé avec les URLs des
-APIs issues de `.env.apigateway`.
-
-## Nettoyage
-
-```bash
-./cleanup.sh
-```
-
-**Attention :** cette commande supprime les ressources HealthTrack détectées
-dans la région AWS sélectionnée, y compris les données DynamoDB. Vérifiez le
-compte et la région avant de la lancer.
-
-## Limites à connaître
-
-- `deploy-dynamodb.sh` crée les tables initiales ; il ne migre pas le schéma
-  d'une table déjà existante.
-- Le bucket du frontend est public en lecture pour l'hébergement statique.
-- Le déploiement nécessite que le compte AWS autorise la création de rôles IAM,
-  politiques et ressources CloudFront.
+- Les identifiants AWS changent à chaque session : recopier le bloc « AWS CLI » de *AWS Details* dans `~/.aws/credentials`.
+- `aws configure set cli_pager ""` évite que les scripts restent bloqués sur l'affichage paginé de l'AWS CLI.
+- Les JARs (~48 Mo) dépassent la limite d'envoi direct de Lambda (50 Mo avec l'encodage) : ils passent par S3.
+- `AWS_REGION` est une variable réservée de Lambda : elle n'est pas posée par les scripts, Lambda la fournit.
+- `deploy-dynamodb.sh` ne migre pas une table existante : pour changer un schéma, supprimer la table d'abord.
+- Le bucket du site est public en lecture (hébergement statique) ; les données restent derrière les APIs authentifiées.

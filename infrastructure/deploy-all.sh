@@ -25,6 +25,7 @@ cd "$SCRIPT_DIR"
 ./deploy-lambdas.sh
 ./deploy-apigateway.sh
 ./deploy-frontend.sh
+./deploy-monitoring.sh
 
 echo
 echo "Deployment completed."

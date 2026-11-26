@@ -2,7 +2,8 @@
  * Page Mes rendez-vous (Patient)
  * Liste les rendez-vous du patient connecte (pagines, filtrables par statut)
  * et permet d'annuler un rendez-vous a venir.
- * API : GET /rendezvous?statut=&page=&limit=  -  POST /rendezvous/{id}/annuler
+ * API : GET /rendezvous?statut=&page=&limit=  -  PATCH /rendezvous/{id} { statut: "ANNULE" }
+ *       GET /rendezvous/{id}/compte-rendu (consultation terminée)
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
@@ -83,12 +84,28 @@ function MesRendezVousPage() {
     setError(null);
     setSuccess(null);
     try {
-      await axios.post(`${API_URLS.rdv}/rendezvous/${rdv.rdvId}/annuler`, null, { headers });
+      await axios.patch(`${API_URLS.rdv}/rendezvous/${rdv.rdvId}`, { statut: 'ANNULE' }, { headers });
       setSuccess('Rendez-vous annulé.');
       fetchRendezvous();
     } catch (err) {
       // ex. CancellationTooLateException (moins de 2h avant)
       setError(err.response?.data?.message || "Erreur lors de l'annulation");
+    }
+  };
+
+  const [compteRendus, setCompteRendus] = useState({});
+  const voirCompteRendu = async (rdv) => {
+    if (compteRendus[rdv.rdvId]) {
+      setCompteRendus(({ [rdv.rdvId]: _, ...rest }) => rest);
+      return;
+    }
+    try {
+      const res = await axios.get(`${API_URLS.rdv}/rendezvous/${rdv.rdvId}/compte-rendu`, { headers });
+      setCompteRendus(c => ({ ...c, [rdv.rdvId]: res.data }));
+    } catch (err) {
+      setError(err.response?.status === 404
+        ? "Le compte rendu de cette consultation n'est pas encore disponible."
+        : (err.response?.data?.message || 'Erreur'));
     }
   };
 
@@ -130,12 +147,24 @@ function MesRendezVousPage() {
             <div key={rdv.rdvId} className={`card rendezvous-card ${STATUT_CLASS[rdv.statut] || ''}`}>
               <div className="card-body">
                 <strong>{formatDate(rdv.date)} à {rdv.heure}</strong>
-                <div>{praticiens[rdv.praticienId] || 'Praticien'}</div>
+                <div>{praticiens[rdv.praticienId] || (rdv.praticienNom ? `Dr ${rdv.praticienNom}` : 'Praticien')}</div>
+                {rdv.motif && <div>Motif : {rdv.motif}</div>}
                 <div>Durée : {rdv.duree || 30} min — Statut : <strong>{STATUTS[rdv.statut] || rdv.statut}</strong></div>
                 {(rdv.statut === 'PLANIFIE' || rdv.statut === 'CONFIRME') && (
                   <button className="btn btn-small btn-danger" onClick={() => annuler(rdv)}>
                     Annuler
                   </button>
+                )}
+                {rdv.statut === 'TERMINE' && (
+                  <button className="btn btn-small btn-secondary" onClick={() => voirCompteRendu(rdv)}>
+                    {compteRendus[rdv.rdvId] ? 'Masquer le compte rendu' : 'Voir le compte rendu'}
+                  </button>
+                )}
+                {compteRendus[rdv.rdvId] && (
+                  <div className="existing-cr">
+                    {compteRendus[rdv.rdvId].diagnostic && <p><strong>Diagnostic :</strong> {compteRendus[rdv.rdvId].diagnostic}</p>}
+                    <p className="cr-contenu">{compteRendus[rdv.rdvId].contenu}</p>
+                  </div>
                 )}
               </div>
             </div>

@@ -1,16 +1,31 @@
 package com.healthtrack.utilisateurs.controller;
 
 import com.healthtrack.utilisateurs.dto.*;
-import com.healthtrack.utilisateurs.exception.ApiException;
+import com.healthtrack.utilisateurs.exception.ForbiddenException;
+import com.healthtrack.utilisateurs.exception.UnauthorizedException;
 import com.healthtrack.utilisateurs.service.UserService;
 import io.jsonwebtoken.Claims;
 import jakarta.validation.Valid;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
+import java.net.URI;
+
+/**
+ * Routes de l'API Utilisateurs.
+ * <pre>
+ * POST  /auth/register                 inscription (patient ou praticien)
+ * POST  /auth/login                    connexion → JWT
+ * GET   /utilisateurs/me               mon profil
+ * PATCH /utilisateurs/me               modifier mon profil
+ * GET   /utilisateurs/{id}             profil d'un utilisateur
+ * PUT   /patients/me/medecin-traitant  désigner / modifier mon médecin traitant
+ * PATCH /praticiens/me/statut          passer en ACTIF / EN_CONGE / INACTIF
+ * GET   /praticiens                    recherche paginée (filtres specialite, statut)
+ * </pre>
+ */
 @RestController
 public class AuthController {
 
@@ -22,8 +37,8 @@ public class AuthController {
 
     private String currentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || auth.getPrincipal() == null || auth.getPrincipal().equals("anonymousUser"))
-            throw new ApiException("Unauthorized", "Non autorisé", 401);
+        if (auth == null || auth.getPrincipal() == null || "anonymousUser".equals(auth.getPrincipal()))
+            throw new UnauthorizedException();
         return auth.getPrincipal().toString();
     }
 
@@ -36,7 +51,8 @@ public class AuthController {
 
     @PostMapping("/auth/register")
     public ResponseEntity<AuthResponse> register(@Valid @RequestBody RegisterRequest req) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(userService.register(req));
+        AuthResponse res = userService.register(req);
+        return ResponseEntity.created(URI.create("/utilisateurs/" + res.user().userId())).body(res);
     }
 
     @PostMapping("/auth/login")
@@ -54,17 +70,22 @@ public class AuthController {
         return userService.updateProfile(currentUserId(), req);
     }
 
+    @GetMapping("/utilisateurs/{id}")
+    public UserResponse getUser(@PathVariable String id) {
+        return userService.getUser(id, currentUserId(), currentUserType());
+    }
+
     @PutMapping("/patients/me/medecin-traitant")
     public UserResponse setMedecinTraitant(@Valid @RequestBody MedecinTraitantRequest req) {
         if (!"PATIENT".equals(currentUserType()))
-            throw new ApiException("Forbidden", "Seul un patient peut désigner son médecin traitant", 403);
+            throw new ForbiddenException("Seul un patient peut désigner son médecin traitant");
         return userService.setMedecinTraitant(currentUserId(), req.medecinTraitantId());
     }
 
     @PatchMapping("/praticiens/me/statut")
     public UserResponse updateStatut(@Valid @RequestBody StatutRequest req) {
         if (!"PRATICIEN".equals(currentUserType()))
-            throw new ApiException("Forbidden", "Seul un praticien peut modifier son statut", 403);
+            throw new ForbiddenException("Seul un praticien peut modifier son statut");
         return userService.updatePraticienStatut(currentUserId(), req.statut());
     }
 

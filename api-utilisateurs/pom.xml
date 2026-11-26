@@ -13,6 +13,10 @@
   <name>HealthTrack API Utilisateurs</name>
   <description>API de gestion des utilisateurs (patients et praticiens)</description>
 
+  <properties>
+    <openapi.file>openapi-utilisateurs.yaml</openapi.file>
+  </properties>
+
   <build>
     <plugins>
       <plugin>

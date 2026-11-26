@@ -13,4 +13,8 @@ public class Ordonnance {
     @DynamoDbAttribute("statut") public String getStatut() { return statut; } public void setStatut(String v) { statut = v; }
     @DynamoDbAttribute("createdAt") public String getCreatedAt() { return createdAt; } public void setCreatedAt(String v) { createdAt = v; }
     @DynamoDbAttribute("updatedAt") public String getUpdatedAt() { return updatedAt; } public void setUpdatedAt(String v) { updatedAt = v; }
+    private String patientNom;
+    @DynamoDbAttribute("patientNom") public String getPatientNom() { return patientNom; } public void setPatientNom(String v) { patientNom = v; }
+    private String praticienNom;
+    @DynamoDbAttribute("praticienNom") public String getPraticienNom() { return praticienNom; } public void setPraticienNom(String v) { praticienNom = v; }
 }

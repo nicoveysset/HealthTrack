@@ -5,6 +5,6 @@ import javax.crypto.SecretKey; import java.nio.charset.StandardCharsets;
 @Service
 public class JwtService {
     private final SecretKey key;
-    public JwtService(@Value("${jwt.secret:healthtrack-default-secret-key-change-me-in-production-32}") String s) { key = Keys.hmacShaKeyFor(s.getBytes(StandardCharsets.UTF_8)); }
+    public JwtService(@Value("${jwt.secret}") String s) { key = Keys.hmacShaKeyFor(s.getBytes(StandardCharsets.UTF_8)); }
     public Claims parse(String t) { return Jwts.parser().verifyWith(key).build().parseSignedClaims(t).getPayload(); }
 }

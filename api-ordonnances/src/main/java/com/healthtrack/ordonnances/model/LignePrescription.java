@@ -11,4 +11,6 @@ public class LignePrescription {
     @DynamoDbAttribute("instructions") public String getInstructions() { return instructions; } public void setInstructions(String v) { instructions = v; }
     @DynamoDbAttribute("createdAt") public String getCreatedAt() { return createdAt; } public void setCreatedAt(String v) { createdAt = v; }
     @DynamoDbAttribute("updatedAt") public String getUpdatedAt() { return updatedAt; } public void setUpdatedAt(String v) { updatedAt = v; }
+    private String medicamentNom;
+    @DynamoDbAttribute("medicamentNom") public String getMedicamentNom() { return medicamentNom; } public void setMedicamentNom(String v) { medicamentNom = v; }
 }
