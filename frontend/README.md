@@ -36,7 +36,7 @@ window.healthtrackConfig = {
 | Écran | Route | Rôle | APIs appelées |
 |---|---|---|---|
 | Connexion / Inscription | `/login`, `/register` | public | Utilisateurs |
-| Accueil (tableau de bord) | `/` | tous | — |
+| Accueil (tableau de bord : chiffres du jour, prochains RDV, raccourcis) | `/` | tous | RDV, Ordonnances, Utilisateurs |
 | Profil, statut praticien, médecin traitant | `/profile` | tous | Utilisateurs |
 | Prise de rendez-vous (créneaux libres) | `/prise-rdv` | patient | Utilisateurs, RDV |
 | Mes rendez-vous (pagination, filtre statut, annulation, compte rendu) | `/mes-rendezvous` | patient | RDV |
